@@ -562,6 +562,8 @@ let watchId = null;
 let tracking = false;
 let routePoints = [];
 let routeDistance = 0;
+let lastRoutePointAt = 0;
+let lastRouteAccuracy = 0;
 let capturedPolygons = [];
 let landmarkMarkers = [];
 let onlineTerritoriesLayer = null;
@@ -824,14 +826,16 @@ function initializeMap() {
 
   map = L.map("mapCanvas", {
     zoomControl: false,
+    attributionControl: false,
     preferCanvas: true
   }).setView([56.9972, 40.9714], 15);
   onlineTerritoriesLayer = L.layerGroup().addTo(map);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
   }).addTo(map);
+  L.control.attribution({ prefix: false, position: "bottomleft" }).addTo(map);
 
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
@@ -977,6 +981,8 @@ function startRoute() {
 
   routePoints = [];
   routeDistance = 0;
+  lastRoutePointAt = 0;
+  lastRouteAccuracy = 0;
   tracking = true;
   routeLine.setLatLngs([]);
   setRouteButtons();
@@ -985,12 +991,13 @@ function startRoute() {
   watchId = navigator.geolocation.watchPosition(
     onPositionUpdate,
     handleGeoError,
-    { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 }
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
   );
 }
 
 function onPositionUpdate(position) {
   const point = [position.coords.latitude, position.coords.longitude];
+  const accuracy = Number(position.coords.accuracy);
 
   if (!userMarker) {
     userMarker = L.circleMarker(point, {
@@ -1004,17 +1011,32 @@ function onPositionUpdate(position) {
     userMarker.setLatLng(point);
   }
 
+  if (!Number.isFinite(accuracy) || accuracy > 40) {
+    if (tracking) setGpsStatus("Сигнал GPS неточный. Подожди точность не хуже 40 м.");
+    updateMapStats();
+    return;
+  }
+
+  const receivedAt = Number(position.timestamp) || Date.now();
   if (routePoints.length === 0) {
     routePoints.push(point);
+    lastRoutePointAt = receivedAt;
+    lastRouteAccuracy = accuracy;
     map.setView(point, Math.max(map.getZoom(), 16));
   } else {
     const lastPoint = routePoints[routePoints.length - 1];
     const stepDistance = distanceMeters(lastPoint, point);
+    const elapsedSeconds = Math.max(1, (receivedAt - lastRoutePointAt) / 1000);
+    const plausibleStep = Math.max(45, elapsedSeconds * 12 + accuracy + lastRouteAccuracy);
 
-    // Отсекаем колебания GPS на месте.
-    if (stepDistance >= 5) {
+    // Игнорируем GPS-скачки и не добавляем точки, объяснимые обычным шумом.
+    if (stepDistance > plausibleStep) {
+      setGpsStatus("GPS дал скачок координат — пропустил точку, продолжаю запись.");
+    } else if (stepDistance >= Math.max(3, Math.min(8, accuracy * 0.12))) {
       routeDistance += stepDistance;
       routePoints.push(point);
+      lastRoutePointAt = receivedAt;
+      lastRouteAccuracy = accuracy;
     }
   }
 
