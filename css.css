@@ -761,6 +761,11 @@ main {
   font-family: Inter, "Segoe UI", Arial, sans-serif;
 }
 
+.leaflet-control-attribution {
+  font-size: 8px !important;
+  opacity: 0.76;
+}
+
 .landmark-marker {
   display: grid;
   place-items: center;
