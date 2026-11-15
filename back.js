@@ -1221,7 +1221,7 @@ async function findLandmarks() {
   const east = bounds.getEast();
 
   const query = `
-    [out:json][timeout:20];
+    [out:json][timeout:10];
     (
       nwr["historic"~"monument|memorial"](${south},${west},${north},${east});
       nwr["amenity"~"place_of_worship|theatre|cinema|university|arts_centre"](${south},${west},${north},${east});
@@ -1235,6 +1235,7 @@ async function findLandmarks() {
 
   try {
     const endpoints = [
+      "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
       "https://overpass-api.de/api/interpreter",
       "https://overpass.private.coffee/api/interpreter"
     ];
@@ -1243,7 +1244,7 @@ async function findLandmarks() {
 
     for (let index = 0; index < endpoints.length; index += 1) {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      const timeoutId = setTimeout(() => controller.abort(), 13000);
       try {
         if (index > 0) {
           list.innerHTML = '<p class="muted">Первый сервер не ответил, пробую запасной…</p>';
