@@ -12,6 +12,7 @@ const defaultState = {
   capturedArea: 0,
   captureCount: 0,
   capturedZones: [],
+  shareTerritories: false,
   owned: ["helmet-none", "armor-leather"],
   equipped: {
     helmet: "helmet-none",
@@ -563,6 +564,169 @@ let routePoints = [];
 let routeDistance = 0;
 let capturedPolygons = [];
 let landmarkMarkers = [];
+let onlineTerritoriesLayer = null;
+let onlineClient = null;
+let onlineUserId = null;
+let onlineRefreshTimer = null;
+let onlineMoveTimer = null;
+
+function setOnlineStatus(message, isError = false) {
+  const status = document.getElementById("onlineStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+
+function onlineIsConfigured() {
+  const config = window.TROLLS_TRAVEL_ONLINE_CONFIG || {};
+  return Boolean(config.projectUrl && config.publishableKey);
+}
+
+async function initializeOnline() {
+  const config = window.TROLLS_TRAVEL_ONLINE_CONFIG || {};
+  const shareToggle = document.getElementById("shareTerritoriesToggle");
+  const refreshButton = document.getElementById("refreshOnlineButton");
+
+  shareToggle.checked = Boolean(game.shareTerritories);
+  shareToggle.addEventListener("change", event => {
+    game.shareTerritories = event.target.checked;
+    saveState();
+    if (game.shareTerritories) {
+      setOnlineStatus("Публикация включена. Новые захваты будут видны всем игрокам.");
+    } else {
+      setOnlineStatus("Публикация выключена. Твои новые захваты останутся на этом устройстве.");
+    }
+  });
+  refreshButton.addEventListener("click", () => refreshOnlineTerritories(true));
+
+  if (!onlineIsConfigured()) {
+    setOnlineStatus("Добавь URL и Publishable key Supabase в online-config.js.");
+    return;
+  }
+
+  if (!window.supabase?.createClient) {
+    setOnlineStatus("Не загрузилась библиотека Supabase. Проверь подключение к интернету.", true);
+    return;
+  }
+
+  try {
+    onlineClient = window.supabase.createClient(config.projectUrl, config.publishableKey);
+    const { data, error } = await onlineClient.auth.getSession();
+    if (error) throw error;
+
+    let session = data.session;
+    if (!session) {
+      const result = await onlineClient.auth.signInAnonymously();
+      if (result.error) throw result.error;
+      session = result.data.session;
+    }
+
+    onlineUserId = session?.user?.id || null;
+    if (!onlineUserId) throw new Error("Не удалось создать игровую сессию.");
+
+    setOnlineStatus("Подключено. Чужие территории отображаются на карте.");
+    await refreshOnlineTerritories();
+
+    clearInterval(onlineRefreshTimer);
+    onlineRefreshTimer = setInterval(() => {
+      if (document.getElementById("mapScreen")?.classList.contains("active")) {
+        refreshOnlineTerritories();
+      }
+    }, 45_000);
+  } catch (error) {
+    console.error("Online mode initialization failed:", error);
+    setOnlineStatus("Не удалось подключиться. Проверь настройки Supabase.", true);
+  }
+}
+
+async function refreshOnlineTerritories(showFeedback = false) {
+  if (!onlineClient || !map || !onlineTerritoriesLayer) {
+    if (showFeedback) setOnlineStatus("Сначала подключи Supabase в online-config.js.", true);
+    return;
+  }
+
+  const bounds = map.getBounds();
+  const { data, error } = await onlineClient
+    .from("territories")
+    .select("id,user_id,player_tag,area_m2,points,created_at,max_lat,min_lat,max_lon,min_lon")
+    .gte("max_lat", bounds.getSouth())
+    .lte("min_lat", bounds.getNorth())
+    .gte("max_lon", bounds.getWest())
+    .lte("min_lon", bounds.getEast())
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) {
+    console.error("Online territories could not be loaded:", error);
+    setOnlineStatus("Не удалось загрузить территории. Проверь таблицу и доступ Supabase.", true);
+    return;
+  }
+
+  onlineTerritoriesLayer.clearLayers();
+  let visibleCount = 0;
+
+  (data || []).forEach(zone => {
+    if (zone.user_id === onlineUserId) return;
+    if (!Array.isArray(zone.points) || zone.points.length < 3 || zone.points.length > 2000) return;
+    if (!zone.points.every(point => Array.isArray(point)
+      && point.length === 2
+      && Number.isFinite(point[0])
+      && Number.isFinite(point[1])
+      && Math.abs(point[0]) <= 90
+      && Math.abs(point[1]) <= 180)) return;
+
+    const polygon = L.polygon(zone.points, {
+      color: "#8b78ff",
+      weight: 2,
+      opacity: 0.95,
+      fillColor: "#8872ff",
+      fillOpacity: 0.24
+    });
+    const player = escapeHtml(zone.player_tag || "Путник");
+    const area = formatArea(Number(zone.area_m2) || 0);
+    const created = new Date(zone.created_at).toLocaleDateString("ru-RU");
+    polygon.bindPopup(`<b>${player}</b><br>${area}<br><small>${created}</small>`);
+    onlineTerritoriesLayer.addLayer(polygon);
+    visibleCount += 1;
+  });
+
+  setOnlineStatus(visibleCount
+    ? `На этой области карты чужих территорий: ${visibleCount}.`
+    : "В этой области карты чужих территорий пока нет.");
+  if (showFeedback) showToast("Общая карта обновлена.");
+}
+
+async function publishTerritory(points, area) {
+  if (!onlineClient || !onlineUserId) {
+    setOnlineStatus("Общая карта не подключена: захват сохранён только на этом устройстве.", true);
+    return;
+  }
+
+  const latitudes = points.map(point => point[0]);
+  const longitudes = points.map(point => point[1]);
+  const userTag = `Путник-${onlineUserId.slice(0, 5).toUpperCase()}`;
+  setOnlineStatus("Публикую границы территории на общей карте…");
+
+  const { error } = await onlineClient.from("territories").insert({
+    user_id: onlineUserId,
+    player_tag: userTag,
+    area_m2: Math.round(area),
+    points,
+    min_lat: Math.min(...latitudes),
+    max_lat: Math.max(...latitudes),
+    min_lon: Math.min(...longitudes),
+    max_lon: Math.max(...longitudes)
+  });
+
+  if (error) {
+    console.error("Online territory could not be published:", error);
+    setOnlineStatus("Захват сохранён локально, но не опубликован. Проверь доступ Supabase.", true);
+    return;
+  }
+
+  setOnlineStatus("Территория опубликована и видна другим игрокам.");
+  await refreshOnlineTerritories();
+}
 
 function setGpsStatus(message, kind = "") {
   document.getElementById("gpsStatus").textContent = message;
@@ -578,6 +742,7 @@ function initializeMap() {
     zoomControl: false,
     preferCanvas: true
   }).setView([56.9972, 40.9714], 15);
+  onlineTerritoriesLayer = L.layerGroup().addTo(map);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
@@ -605,9 +770,14 @@ function initializeMap() {
   document.getElementById("finishRouteButton").addEventListener("click", finishRoute);
   document.getElementById("cancelRouteButton").addEventListener("click", cancelRoute);
   document.getElementById("landmarksButton").addEventListener("click", findLandmarks);
+  map.on("moveend", () => {
+    clearTimeout(onlineMoveTimer);
+    onlineMoveTimer = setTimeout(() => refreshOnlineTerritories(), 250);
+  });
 
   map.whenReady(() => setTimeout(() => map.invalidateSize(), 80));
   updateMapStats();
+  initializeOnline();
 }
 
 function distanceMeters(a, b) {
@@ -857,6 +1027,7 @@ function captureTerritory(points, area) {
     "ok"
   );
   showToast(`Территория захвачена! ${formatArea(area)} · +${reward} монет.`);
+  if (game.shareTerritories) publishTerritory(points, area);
 }
 
 function addCapturedPolygon(points, fitBounds) {
