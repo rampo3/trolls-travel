@@ -1,0 +1,1028 @@
+"use strict";
+
+const STORAGE_KEY = "trollsTravelMiniAgarioV1";
+const PLAYABLE_WORLD_AREA_M2 = 5_000_000;
+const COINS_PER_PERCENT = 10;
+const MIN_CAPTURE_AREA_M2 = 1_000;
+const ROUTE_CLOSE_DISTANCE_M = 50;
+
+const defaultState = {
+  unlimitedMoney: true,
+  earnedCoins: 0,
+  capturedArea: 0,
+  captureCount: 0,
+  capturedZones: [],
+  owned: ["helmet-none", "armor-leather"],
+  equipped: {
+    helmet: "helmet-none",
+    armor: "armor-leather",
+    skin: "moss",
+    hair: "dark"
+  }
+};
+
+function loadState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    return {
+      ...defaultState,
+      ...saved,
+      equipped: { ...defaultState.equipped, ...(saved.equipped || {}) },
+      owned: Array.isArray(saved.owned)
+        ? [...new Set([...defaultState.owned, ...saved.owned])]
+        : [...defaultState.owned],
+      capturedZones: Array.isArray(saved.capturedZones) ? saved.capturedZones : []
+    };
+  } catch {
+    return structuredClone(defaultState);
+  }
+}
+
+let game = loadState();
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(game));
+  } catch {
+    showToast("Не удалось сохранить прогресс в этом браузере.", true);
+  }
+}
+
+const cosmetics = [
+  {
+    id: "helmet-none",
+    type: "helmet",
+    name: "Без шлема",
+    description: "Естественный вид путешественника.",
+    icon: "♟"
+  },
+  {
+    id: "helmet-iron",
+    type: "helmet",
+    name: "Железный шлем",
+    description: "Прочный шлем для дальних прогулок.",
+    icon: "⛑"
+  },
+  {
+    id: "helmet-horns",
+    type: "helmet",
+    name: "Рогатый шлем",
+    description: "Большие рога и суровый вид.",
+    icon: "♜"
+  },
+  {
+    id: "armor-leather",
+    type: "armor",
+    name: "Кожаная броня",
+    description: "Лёгкая броня для исследователя.",
+    icon: "🛡"
+  },
+  {
+    id: "armor-iron",
+    type: "armor",
+    name: "Стальная броня",
+    description: "Тяжёлый нагрудник с металлическими наплечниками.",
+    icon: "⚔"
+  },
+  {
+    id: "armor-fur",
+    type: "armor",
+    name: "Северный мех",
+    description: "Тёплый плащ для холодных земель.",
+    icon: "❄"
+  }
+];
+
+const skinColors = {
+  moss: 0x78977d,
+  stone: 0x87908d,
+  olive: 0x9a9c62
+};
+
+const hairColors = {
+  dark: 0x3a2b22,
+  gray: 0xaaa99e,
+  red: 0x8e4d2e
+};
+
+let toastTimer = null;
+
+function showToast(message, isError = false) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.toggle("error", isError);
+  toast.classList.add("visible");
+
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("visible"), 3600);
+}
+
+/* Навигация */
+
+const screens = [...document.querySelectorAll(".screen")];
+const navButtons = [...document.querySelectorAll("[data-screen]")];
+
+function showScreen(name) {
+  screens.forEach(screen => {
+    screen.classList.toggle("active", screen.id === `${name}Screen`);
+  });
+
+  document.querySelectorAll(".nav-button").forEach(button => {
+    button.classList.toggle("active", button.dataset.screen === name);
+  });
+
+  if (name === "map") {
+    initializeMap();
+    setTimeout(() => map?.invalidateSize(), 80);
+  }
+
+  if (name === "character") {
+    initializeTroll();
+    setTimeout(resizeTroll, 60);
+  }
+}
+
+navButtons.forEach(button => {
+  button.addEventListener("click", event => {
+    event.preventDefault();
+    showScreen(button.dataset.screen);
+  });
+});
+
+/* Магазин и внешний вид */
+
+function catalogItem(id) {
+  return cosmetics.find(item => item.id === id);
+}
+
+function populateSelect(selectId, type) {
+  const select = document.getElementById(selectId);
+  const current = game.equipped[type];
+
+  select.innerHTML = cosmetics
+    .filter(item => item.type === type && game.owned.includes(item.id))
+    .map(item => `<option value="${item.id}">${item.name}</option>`)
+    .join("");
+
+  select.value = current;
+}
+
+function updateAppearanceControls() {
+  populateSelect("helmetSelect", "helmet");
+  populateSelect("armorSelect", "armor");
+
+  document.getElementById("skinSelect").value = game.equipped.skin;
+  document.getElementById("hairSelect").value = game.equipped.hair;
+
+  document.getElementById("helmetSelect").addEventListener("change", event => {
+    game.equipped.helmet = event.target.value;
+    saveState();
+    rebuildTroll();
+  });
+
+  document.getElementById("armorSelect").addEventListener("change", event => {
+    game.equipped.armor = event.target.value;
+    saveState();
+    rebuildTroll();
+  });
+
+  document.getElementById("skinSelect").addEventListener("change", event => {
+    game.equipped.skin = event.target.value;
+    saveState();
+    rebuildTroll();
+  });
+
+  document.getElementById("hairSelect").addEventListener("change", event => {
+    game.equipped.hair = event.target.value;
+    saveState();
+    rebuildTroll();
+  });
+}
+
+function renderShop() {
+  const container = document.getElementById("shopItems");
+
+  container.innerHTML = cosmetics.map(item => {
+    const owned = game.owned.includes(item.id);
+    return `
+      <article class="shop-item">
+        <div class="shop-item-preview">${item.icon}</div>
+        <h3>${item.name}</h3>
+        <p>${item.description}</p>
+        <button
+          class="${owned ? "secondary-button" : "primary-button"}"
+          data-cosmetic="${item.id}">
+          ${owned ? "Надеть" : "Открыть бесплатно"}
+        </button>
+      </article>
+    `;
+  }).join("");
+
+  container.querySelectorAll("[data-cosmetic]").forEach(button => {
+    button.addEventListener("click", () => {
+      const item = catalogItem(button.dataset.cosmetic);
+      if (!item) return;
+
+      if (!game.owned.includes(item.id)) {
+        game.owned.push(item.id);
+        showToast(`Открыто: ${item.name}. Стоимость — 0 монет.`);
+      }
+
+      game.equipped[item.type] = item.id;
+      saveState();
+      renderShop();
+      updateAppearanceControls();
+      rebuildTroll();
+    });
+  });
+}
+
+/* Трёхмерный тролль */
+
+let renderer = null;
+let scene = null;
+let camera = null;
+let trollGroup = null;
+let trollAnimationId = 0;
+let trollResizeObserver = null;
+let trollDrag = null;
+
+function makeMaterial(color, roughness = 0.82, metalness = 0) {
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+}
+
+function addSphere(parent, x, y, z, sx, sy, sz, material) {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 28, 20),
+    material
+  );
+
+  mesh.position.set(x, y, z);
+  mesh.scale.set(sx, sy, sz);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function addCylinder(parent, x, y, z, radiusTop, radiusBottom, height, material) {
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(radiusTop, radiusBottom, height, 18),
+    material
+  );
+
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function addBetween(parent, start, end, radius, material) {
+  const direction = new THREE.Vector3().subVectors(end, start);
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(radius * 0.8, radius, direction.length(), 16),
+    material
+  );
+
+  mesh.position.copy(start).add(end).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    direction.clone().normalize()
+  );
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function addTrollHelmet(parent, metalMaterial, leatherMaterial) {
+  const helmetId = game.equipped.helmet;
+
+  if (helmetId === "helmet-none") return;
+
+  addSphere(parent, 0, 2.76, 0, 0.52, 0.3, 0.46, metalMaterial);
+  addCylinder(parent, 0, 2.61, 0, 0.51, 0.51, 0.12, metalMaterial);
+  addSphere(parent, 0, 2.54, 0.36, 0.39, 0.09, 0.18, metalMaterial);
+
+  if (helmetId === "helmet-horns") {
+    const hornMaterial = makeMaterial(0xd6c59b);
+    const leftStart = new THREE.Vector3(-0.42, 2.77, 0);
+    const leftEnd = new THREE.Vector3(-0.76, 3.05, 0.02);
+    const rightStart = new THREE.Vector3(0.42, 2.77, 0);
+    const rightEnd = new THREE.Vector3(0.76, 3.05, 0.02);
+
+    addBetween(parent, leftStart, leftEnd, 0.1, hornMaterial);
+    addBetween(parent, rightStart, rightEnd, 0.1, hornMaterial);
+  } else {
+    addSphere(parent, 0, 2.77, 0.06, 0.18, 0.22, 0.09, leatherMaterial);
+  }
+}
+
+function addHair(parent, hairMaterial) {
+  addSphere(parent, 0, 2.87, -0.18, 0.52, 0.22, 0.42, hairMaterial);
+
+  for (let i = 0; i < 9; i += 1) {
+    const angle = (i / 9) * Math.PI * 2;
+    const x = Math.cos(angle) * 0.39;
+    const z = -0.18 + Math.sin(angle) * 0.34;
+
+    const tuft = new THREE.Mesh(
+      new THREE.ConeGeometry(0.105, 0.38 + (i % 3) * 0.04, 8),
+      hairMaterial
+    );
+
+    tuft.position.set(x, 3.0 + (i % 2) * 0.04, z);
+    tuft.rotation.z = Math.sin(angle) * 0.7;
+    tuft.rotation.x = Math.cos(angle) * 0.35;
+    tuft.castShadow = true;
+    parent.add(tuft);
+  }
+}
+
+function buildTroll() {
+  if (!scene) return;
+
+  if (trollGroup) {
+    scene.remove(trollGroup);
+    trollGroup.traverse(object => {
+      if (object.geometry) object.geometry.dispose();
+      if (object.material && !Array.isArray(object.material)) object.material.dispose();
+    });
+  }
+
+  trollGroup = new THREE.Group();
+  scene.add(trollGroup);
+
+  const skinMaterial = makeMaterial(skinColors[game.equipped.skin] || skinColors.moss);
+  const darkerSkin = makeMaterial(0x526b5f);
+  const hairMaterial = makeMaterial(hairColors[game.equipped.hair] || hairColors.dark);
+  const leatherMaterial = makeMaterial(0x503d2f);
+  const leatherLight = makeMaterial(0x785b3e);
+  const metalMaterial = makeMaterial(0x85958d, 0.38, 0.62);
+  const bootMaterial = makeMaterial(0x302c2b);
+  const eyeMaterial = makeMaterial(0xf3df9b, 0.25);
+  const pupilMaterial = makeMaterial(0x261d19, 0.2);
+  const toothMaterial = makeMaterial(0xe5d8b7);
+
+  // Ноги и сапоги
+  addBetween(
+    trollGroup,
+    new THREE.Vector3(-0.22, 1.05, 0),
+    new THREE.Vector3(-0.3, 0.28, 0),
+    0.17,
+    skinMaterial
+  );
+  addBetween(
+    trollGroup,
+    new THREE.Vector3(0.22, 1.05, 0),
+    new THREE.Vector3(0.3, 0.28, 0),
+    0.17,
+    skinMaterial
+  );
+  addSphere(trollGroup, -0.34, 0.18, 0.08, 0.28, 0.14, 0.38, bootMaterial);
+  addSphere(trollGroup, 0.34, 0.18, 0.08, 0.28, 0.14, 0.38, bootMaterial);
+
+  // Тело и броня
+  addSphere(trollGroup, 0, 1.55, 0, 0.56, 0.72, 0.37, skinMaterial);
+
+  if (game.equipped.armor === "armor-iron") {
+    addSphere(trollGroup, 0, 1.62, 0.08, 0.58, 0.55, 0.42, metalMaterial);
+    addSphere(trollGroup, 0, 1.67, 0.46, 0.11, 0.32, 0.05, leatherLight);
+  } else if (game.equipped.armor === "armor-fur") {
+    const furMaterial = makeMaterial(0xc3b492);
+    addSphere(trollGroup, 0, 2.02, 0, 0.6, 0.22, 0.42, furMaterial);
+    addSphere(trollGroup, 0, 1.55, 0, 0.53, 0.54, 0.39, leatherMaterial);
+    addSphere(trollGroup, 0, 1.56, 0.39, 0.28, 0.35, 0.05, leatherLight);
+  } else {
+    addSphere(trollGroup, 0, 1.56, 0, 0.53, 0.54, 0.39, leatherMaterial);
+    addSphere(trollGroup, 0, 1.57, 0.39, 0.27, 0.34, 0.05, leatherLight);
+  }
+
+  // Ремень и пряжка
+  addCylinder(trollGroup, 0, 1.17, 0.02, 0.48, 0.48, 0.12, leatherLight);
+  addSphere(trollGroup, 0, 1.17, 0.49, 0.11, 0.11, 0.06, makeMaterial(0xd9ae4d));
+
+  // Руки
+  addBetween(
+    trollGroup,
+    new THREE.Vector3(-0.48, 1.95, 0),
+    new THREE.Vector3(-0.76, 1.25, 0.06),
+    0.16,
+    skinMaterial
+  );
+  addBetween(
+    trollGroup,
+    new THREE.Vector3(0.48, 1.95, 0),
+    new THREE.Vector3(0.76, 1.25, 0.06),
+    0.16,
+    skinMaterial
+  );
+  addSphere(trollGroup, -0.78, 1.2, 0.08, 0.19, 0.18, 0.17, skinMaterial);
+  addSphere(trollGroup, 0.78, 1.2, 0.08, 0.19, 0.18, 0.17, skinMaterial);
+
+  // Наплечники
+  addSphere(trollGroup, -0.54, 1.94, 0.01, 0.27, 0.23, 0.28,
+    game.equipped.armor === "armor-iron" ? metalMaterial : darkerSkin);
+  addSphere(trollGroup, 0.54, 1.94, 0.01, 0.27, 0.23, 0.28,
+    game.equipped.armor === "armor-iron" ? metalMaterial : darkerSkin);
+
+  // Голова и уши
+  addCylinder(trollGroup, 0, 2.18, 0, 0.2, 0.21, 0.27, skinMaterial);
+  addSphere(trollGroup, 0, 2.54, 0.02, 0.51, 0.58, 0.43, skinMaterial);
+  addSphere(trollGroup, -0.52, 2.48, 0, 0.16, 0.26, 0.11, darkerSkin);
+  addSphere(trollGroup, 0.52, 2.48, 0, 0.16, 0.26, 0.11, darkerSkin);
+
+  // Брови и глаза
+  addSphere(trollGroup, -0.2, 2.67, 0.39, 0.19, 0.065, 0.07, hairMaterial);
+  addSphere(trollGroup, 0.2, 2.67, 0.39, 0.19, 0.065, 0.07, hairMaterial);
+  addSphere(trollGroup, -0.2, 2.55, 0.4, 0.095, 0.11, 0.055, eyeMaterial);
+  addSphere(trollGroup, 0.2, 2.55, 0.4, 0.095, 0.11, 0.055, eyeMaterial);
+  addSphere(trollGroup, -0.18, 2.55, 0.45, 0.035, 0.07, 0.025, pupilMaterial);
+  addSphere(trollGroup, 0.22, 2.55, 0.45, 0.035, 0.07, 0.025, pupilMaterial);
+
+  // Большой нос, улыбка и клыки
+  addSphere(trollGroup, 0, 2.38, 0.49, 0.18, 0.17, 0.16, darkerSkin);
+  addSphere(trollGroup, 0, 2.19, 0.405, 0.27, 0.09, 0.06, leatherMaterial);
+  addSphere(trollGroup, -0.16, 2.19, 0.44, 0.04, 0.07, 0.035, toothMaterial);
+  addSphere(trollGroup, 0.16, 2.19, 0.44, 0.04, 0.07, 0.035, toothMaterial);
+
+  addHair(trollGroup, hairMaterial);
+  addTrollHelmet(trollGroup, metalMaterial, leatherMaterial);
+
+  trollGroup.position.y = 0;
+}
+
+function initializeTroll() {
+  if (renderer || !window.THREE) return;
+
+  const host = document.getElementById("trollCanvas");
+  if (!host) return;
+
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
+  camera.position.set(0, 1.8, 6.6);
+  camera.lookAt(0, 1.65, 0);
+
+  renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(host.clientWidth, host.clientHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  host.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 1.25));
+
+  const keyLight = new THREE.DirectionalLight(0xfff0d7, 2.2);
+  keyLight.position.set(-3, 5, 5);
+  keyLight.castShadow = true;
+  scene.add(keyLight);
+
+  const rimLight = new THREE.DirectionalLight(0x49d7b2, 1.5);
+  rimLight.position.set(4, 3, -3);
+  scene.add(rimLight);
+
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(1.2, 48),
+    new THREE.MeshStandardMaterial({
+      color: 0x1c3440,
+      roughness: 0.74,
+      metalness: 0.18
+    })
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = 0.015;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  const pedestal = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.77, 0.85, 0.15, 48),
+    makeMaterial(0x253647, 0.45, 0.4)
+  );
+  pedestal.position.y = 0.08;
+  pedestal.castShadow = true;
+  pedestal.receiveShadow = true;
+  scene.add(pedestal);
+
+  buildTroll();
+  attachTrollDrag(host);
+  resizeTroll();
+
+  trollResizeObserver = new ResizeObserver(resizeTroll);
+  trollResizeObserver.observe(host);
+
+  const animate = () => {
+    trollAnimationId = requestAnimationFrame(animate);
+    if (trollGroup && !trollDrag) trollGroup.rotation.y += 0.0025;
+    renderer.render(scene, camera);
+  };
+  animate();
+}
+
+function resizeTroll() {
+  if (!renderer || !camera) return;
+  const host = document.getElementById("trollCanvas");
+  if (!host || host.clientWidth < 1 || host.clientHeight < 1) return;
+
+  camera.aspect = host.clientWidth / host.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(host.clientWidth, host.clientHeight);
+}
+
+function rebuildTroll() {
+  if (!scene) return;
+  buildTroll();
+}
+
+function attachTrollDrag(host) {
+  host.addEventListener("pointerdown", event => {
+    trollDrag = { x: event.clientX, rotation: trollGroup?.rotation.y || 0 };
+    host.setPointerCapture(event.pointerId);
+  });
+
+  host.addEventListener("pointermove", event => {
+    if (!trollDrag || !trollGroup) return;
+    const delta = event.clientX - trollDrag.x;
+    trollGroup.rotation.y = trollDrag.rotation + delta * 0.012;
+  });
+
+  const release = () => { trollDrag = null; };
+  host.addEventListener("pointerup", release);
+  host.addEventListener("pointercancel", release);
+}
+
+/* Карта и GPS */
+
+let map = null;
+let userMarker = null;
+let routeLine = null;
+let watchId = null;
+let tracking = false;
+let routePoints = [];
+let routeDistance = 0;
+let capturedPolygons = [];
+let landmarkMarkers = [];
+
+function setGpsStatus(message, kind = "") {
+  document.getElementById("gpsStatus").textContent = message;
+  const dot = document.getElementById("gpsDot");
+  dot.classList.toggle("ok", kind === "ok");
+  dot.classList.toggle("error", kind === "error");
+}
+
+function initializeMap() {
+  if (map || !window.L) return;
+
+  map = L.map("mapCanvas", {
+    zoomControl: false,
+    preferCanvas: true
+  }).setView([56.9972, 40.9714], 15);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+
+  routeLine = L.polyline([], {
+    color: "#765ff0",
+    weight: 5,
+    opacity: 0.9,
+    lineCap: "round",
+    lineJoin: "round"
+  }).addTo(map);
+
+  game.capturedZones.forEach(zone => {
+    if (Array.isArray(zone.points) && zone.points.length >= 3) {
+      addCapturedPolygon(zone.points, false);
+    }
+  });
+
+  document.getElementById("locateButton").addEventListener("click", locatePlayer);
+  document.getElementById("startRouteButton").addEventListener("click", startRoute);
+  document.getElementById("finishRouteButton").addEventListener("click", finishRoute);
+  document.getElementById("cancelRouteButton").addEventListener("click", cancelRoute);
+  document.getElementById("landmarksButton").addEventListener("click", findLandmarks);
+
+  map.whenReady(() => setTimeout(() => map.invalidateSize(), 80));
+  updateMapStats();
+}
+
+function distanceMeters(a, b) {
+  const radius = 6371000;
+  const lat1 = a[0] * Math.PI / 180;
+  const lat2 = b[0] * Math.PI / 180;
+  const dLat = (b[0] - a[0]) * Math.PI / 180;
+  const dLon = (b[1] - a[1]) * Math.PI / 180;
+
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+
+  return radius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function polygonAreaMeters(points) {
+  if (points.length < 3) return 0;
+
+  const latitude = points.reduce((sum, point) => sum + point[0], 0) / points.length;
+  const radius = 6378137;
+  const cosLat = Math.cos(latitude * Math.PI / 180);
+  const xy = points.map(point => [
+    radius * point[1] * Math.PI / 180 * cosLat,
+    radius * point[0] * Math.PI / 180
+  ]);
+
+  let twiceArea = 0;
+  for (let i = 0; i < xy.length; i += 1) {
+    const current = xy[i];
+    const next = xy[(i + 1) % xy.length];
+    twiceArea += current[0] * next[1] - next[0] * current[1];
+  }
+
+  return Math.abs(twiceArea) / 2;
+}
+
+function formatArea(area) {
+  if (area >= 1_000_000) return `${(area / 1_000_000).toFixed(2)} км²`;
+  if (area >= 1_000) return `${(area / 1_000).toFixed(2)} тыс. м²`;
+  return `${Math.round(area)} м²`;
+}
+
+function formatDistance(distance) {
+  if (distance >= 1_000) return `${(distance / 1_000).toFixed(2)} км`;
+  return `${Math.round(distance)} м`;
+}
+
+function locatePlayer() {
+  if (!navigator.geolocation) {
+    setGpsStatus("Этот браузер не поддерживает геолокацию.", "error");
+    showToast("Геолокация в этом браузере недоступна.", true);
+    return;
+  }
+
+  setGpsStatus("Определяю местоположение…");
+  navigator.geolocation.getCurrentPosition(
+    position => {
+      const point = [position.coords.latitude, position.coords.longitude];
+      map.setView(point, 17);
+
+      if (!userMarker) {
+        userMarker = L.circleMarker(point, {
+          radius: 8,
+          color: "#fff",
+          weight: 3,
+          fillColor: "#477af1",
+          fillOpacity: 1
+        }).addTo(map).bindPopup("Вы здесь");
+      } else {
+        userMarker.setLatLng(point);
+      }
+
+      setGpsStatus("Местоположение найдено.", "ok");
+    },
+    error => handleGeoError(error),
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
+  );
+}
+
+function handleGeoError(error) {
+  let message = "Не удалось получить местоположение.";
+
+  if (error?.code === 1) {
+    message = "Разреши доступ к геолокации в браузере.";
+  } else if (error?.code === 2) {
+    message = "Сигнал GPS недоступен. Попробуй выйти на улицу.";
+  } else if (error?.code === 3) {
+    message = "GPS не ответил вовремя. Попробуй ещё раз.";
+  }
+
+  setGpsStatus(message, "error");
+  showToast(message, true);
+}
+
+function setRouteButtons() {
+  document.getElementById("startRouteButton").disabled = tracking;
+  document.getElementById("finishRouteButton").disabled = !tracking;
+  document.getElementById("cancelRouteButton").disabled = !tracking;
+  document.getElementById("routeBadge").textContent = tracking ? "МАРШРУТ" : "ГОТОВ";
+}
+
+function startRoute() {
+  if (!navigator.geolocation) {
+    showToast("Браузер не поддерживает GPS.", true);
+    return;
+  }
+
+  if (!window.isSecureContext) {
+    showToast("Для GPS открой проект через localhost или HTTPS, а не через file://.", true);
+    setGpsStatus("Для геолокации открой приложение через localhost или HTTPS.", "error");
+    return;
+  }
+
+  routePoints = [];
+  routeDistance = 0;
+  tracking = true;
+  routeLine.setLatLngs([]);
+  setRouteButtons();
+  setGpsStatus("Маршрут записывается. Пройди замкнутый круг.", "ok");
+
+  watchId = navigator.geolocation.watchPosition(
+    onPositionUpdate,
+    handleGeoError,
+    { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 }
+  );
+}
+
+function onPositionUpdate(position) {
+  const point = [position.coords.latitude, position.coords.longitude];
+
+  if (!userMarker) {
+    userMarker = L.circleMarker(point, {
+      radius: 8,
+      color: "#fff",
+      weight: 3,
+      fillColor: "#477af1",
+      fillOpacity: 1
+    }).addTo(map).bindPopup("Вы здесь");
+  } else {
+    userMarker.setLatLng(point);
+  }
+
+  if (routePoints.length === 0) {
+    routePoints.push(point);
+    map.setView(point, Math.max(map.getZoom(), 16));
+  } else {
+    const lastPoint = routePoints[routePoints.length - 1];
+    const stepDistance = distanceMeters(lastPoint, point);
+
+    // Отсекаем колебания GPS на месте.
+    if (stepDistance >= 5) {
+      routeDistance += stepDistance;
+      routePoints.push(point);
+    }
+  }
+
+  routeLine.setLatLngs(routePoints);
+  updateMapStats();
+}
+
+function stopGpsWatch() {
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+}
+
+function finishRoute() {
+  if (!tracking) return;
+
+  tracking = false;
+  stopGpsWatch();
+  setRouteButtons();
+
+  if (routePoints.length < 5) {
+    setGpsStatus("Маршрут слишком короткий — нужно пройти больше точек.", "error");
+    showToast("Недостаточно точек для захвата территории.", true);
+    return;
+  }
+
+  const start = routePoints[0];
+  const end = routePoints[routePoints.length - 1];
+  const gap = distanceMeters(start, end);
+
+  if (gap > ROUTE_CLOSE_DISTANCE_M) {
+    setGpsStatus("Маршрут не замкнут: вернись ближе к точке старта.", "error");
+    showToast("Замкни маршрут рядом с начальной точкой.", true);
+    return;
+  }
+
+  const polygonPoints = [...routePoints];
+  if (gap > 2) polygonPoints.push(start);
+
+  const area = polygonAreaMeters(polygonPoints);
+
+  if (area < MIN_CAPTURE_AREA_M2) {
+    setGpsStatus("Площадь круга меньше минимальной.", "error");
+    showToast(`Нужна площадь не меньше ${MIN_CAPTURE_AREA_M2} м².`, true);
+    return;
+  }
+
+  captureTerritory(polygonPoints, area);
+}
+
+function cancelRoute() {
+  tracking = false;
+  stopGpsWatch();
+  routePoints = [];
+  routeDistance = 0;
+  routeLine?.setLatLngs([]);
+  setRouteButtons();
+  setGpsStatus("Маршрут отменён.");
+  updateMapStats();
+}
+
+function captureTerritory(points, area) {
+  const previousPercent = Math.min(
+    100,
+    (game.capturedArea / PLAYABLE_WORLD_AREA_M2) * 100
+  );
+
+  game.capturedArea += area;
+  game.captureCount += 1;
+
+  const currentPercent = Math.min(
+    100,
+    (game.capturedArea / PLAYABLE_WORLD_AREA_M2) * 100
+  );
+
+  // Начисление по приросту процента: 10 монет за каждый новый 1% игровой зоны.
+  const oldCoinMark = Math.floor(previousPercent * COINS_PER_PERCENT);
+  const newCoinMark = Math.floor(currentPercent * COINS_PER_PERCENT);
+  const reward = Math.max(0, newCoinMark - oldCoinMark);
+
+  game.earnedCoins += reward;
+  game.capturedZones.push({
+    area,
+    points: points.map(point => [point[0], point[1]])
+  });
+
+  addCapturedPolygon(points, true);
+  saveState();
+  updateMapStats();
+
+  setGpsStatus(
+    `Территория захвачена: ${formatArea(area)}. Получено ${reward} монет.`,
+    "ok"
+  );
+  showToast(`Территория захвачена! ${formatArea(area)} · +${reward} монет.`);
+}
+
+function addCapturedPolygon(points, fitBounds) {
+  const polygon = L.polygon(points, {
+    color: "#1ba782",
+    weight: 2,
+    opacity: 0.95,
+    fillColor: "#35ddb0",
+    fillOpacity: 0.3
+  }).addTo(map);
+
+  capturedPolygons.push(polygon);
+  if (fitBounds) map.fitBounds(polygon.getBounds(), { padding: [36, 36] });
+}
+
+function updateMapStats() {
+  const percent = Math.min(
+    100,
+    (game.capturedArea / PLAYABLE_WORLD_AREA_M2) * 100
+  );
+
+  document.getElementById("areaValue").textContent = formatArea(game.capturedArea);
+  document.getElementById("distanceValue").textContent = formatDistance(routeDistance);
+  document.getElementById("captureValue").textContent = String(game.captureCount);
+  document.getElementById("percentValue").textContent = `${percent.toFixed(2)}%`;
+  document.getElementById("progressText").textContent =
+    `${percent.toFixed(2)}% игровой зоны`;
+  document.getElementById("progressFill").style.width = `${percent}%`;
+}
+
+/* Достопримечательности из OpenStreetMap через Overpass API */
+
+function iconForLandmark(tags) {
+  if (tags.historic === "monument" || tags.historic === "memorial") return "🏛️";
+  if (tags.amenity === "place_of_worship") return "⛪";
+  if (tags.amenity === "university") return "🎓";
+  if (tags.amenity === "cinema") return "🎬";
+  if (tags.shop === "mall") return "🛍️";
+  if (tags.amenity === "theatre" || tags.amenity === "arts_centre") return "🎭";
+  return "📍";
+}
+
+function landmarkCategory(tags) {
+  if (tags.historic === "monument" || tags.historic === "memorial") return "Памятник";
+  if (tags.amenity === "place_of_worship") return "Церковь";
+  if (tags.amenity === "university") return "Университет";
+  if (tags.amenity === "cinema") return "Кинотеатр";
+  if (tags.shop === "mall") return "Торговый центр";
+  if (tags.amenity === "theatre" || tags.amenity === "arts_centre") return "Культура";
+  return "Достопримечательность";
+}
+
+async function findLandmarks() {
+  if (!map) initializeMap();
+
+  const bounds = map.getBounds().pad(0.25);
+  const south = bounds.getSouth();
+  const west = bounds.getWest();
+  const north = bounds.getNorth();
+  const east = bounds.getEast();
+
+  const query = `
+    [out:json][timeout:20];
+    (
+      nwr["historic"~"monument|memorial"](${south},${west},${north},${east});
+      nwr["amenity"~"place_of_worship|theatre|cinema|university|arts_centre"](${south},${west},${north},${east});
+      nwr["shop"="mall"](${south},${west},${north},${east});
+    );
+    out center tags;
+  `;
+
+  const list = document.getElementById("landmarkList");
+  list.innerHTML = '<p class="muted">Ищу места в OpenStreetMap…</p>';
+
+  try {
+    const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+    const response = await fetch(url);
+
+    if (!response.ok) throw new Error("Overpass API error");
+
+    const data = await response.json();
+    const elements = data.elements || [];
+
+    landmarkMarkers.forEach(marker => map.removeLayer(marker));
+    landmarkMarkers = [];
+
+    if (elements.length === 0) {
+      list.innerHTML = '<p class="muted">В этой области важные места не найдены.</p>';
+      return;
+    }
+
+    const seen = new Set();
+    const visibleElements = elements.filter(element => {
+      const tags = element.tags || {};
+      const name = tags.name || tags["name:ru"] || landmarkCategory(tags);
+      const key = `${name}:${element.type}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    list.innerHTML = "";
+
+    visibleElements.slice(0, 40).forEach(element => {
+      const tags = element.tags || {};
+      const lat = element.lat ?? element.center?.lat;
+      const lon = element.lon ?? element.center?.lon;
+      if (typeof lat !== "number" || typeof lon !== "number") return;
+
+      const name = tags.name || tags["name:ru"] || landmarkCategory(tags);
+      const icon = iconForLandmark(tags);
+      const category = landmarkCategory(tags);
+
+      const markerIcon = L.divIcon({
+        className: "",
+        html: `<span class="landmark-marker">${icon}</span>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16]
+      });
+
+      const marker = L.marker([lat, lon], { icon: markerIcon })
+        .addTo(map)
+        .bindPopup(`<b>${escapeHtml(name)}</b><br>${escapeHtml(category)}`);
+
+      landmarkMarkers.push(marker);
+
+      const button = document.createElement("button");
+      button.className = "landmark-item";
+      button.innerHTML = `
+        <span class="landmark-symbol">${icon}</span>
+        <span class="landmark-name">${escapeHtml(name)}<br>
+          <span class="muted">${escapeHtml(category)}</span>
+        </span>
+      `;
+      button.addEventListener("click", () => {
+        map.setView([lat, lon], Math.max(map.getZoom(), 17));
+        marker.openPopup();
+      });
+      list.appendChild(button);
+    });
+
+    if (!list.children.length) {
+      list.innerHTML = '<p class="muted">В этой области важные места не найдены.</p>';
+    }
+  } catch {
+    list.innerHTML =
+      '<p class="muted">Не удалось загрузить список. Проверь подключение и попробуй ещё раз.</p>';
+    showToast("Сервис достопримечательностей временно недоступен.", true);
+  }
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, character => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  }[character]));
+}
+
+/* Начальная настройка */
+
+document.getElementById("walletValue").textContent =
+  game.unlimitedMoney ? "∞" : String(game.earnedCoins);
+
+updateAppearanceControls();
+renderShop();
+updateMapStats();

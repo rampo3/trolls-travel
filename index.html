@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101a25">
+  <title>TrollsTravel — территория троллей</title>
+
+  <link rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" data-screen="home" aria-label="На главный экран">
+      <span class="brand-mark">T</span>
+      <span>Trolls<span class="brand-accent">Travel</span></span>
+    </a>
+
+    <nav class="topnav" aria-label="Главное меню">
+      <button class="nav-button active" data-screen="home">Главная</button>
+      <button class="nav-button" data-screen="map">Карта</button>
+      <button class="nav-button" data-screen="character">Персонаж</button>
+      <button class="nav-button" data-screen="shop">Магазин</button>
+    </nav>
+
+    <div class="wallet" title="В этой версии монеты бесконечные">
+      <span aria-hidden="true">◉</span>
+      <span id="walletValue">∞</span>
+      <small>монет</small>
+    </div>
+  </header>
+
+  <main>
+    <!-- Главное меню -->
+    <section id="homeScreen" class="screen active">
+      <div class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Исследуй город. Создавай легенды.</p>
+          <h1>Твоя территория<br>начинается здесь</h1>
+          <p class="hero-text">
+            Исследуй улицы, захватывай территории и создай собственного
+            тролля-путешественника.
+          </p>
+          <button class="primary-button" data-screen="map">
+            Открыть карту <span aria-hidden="true">→</span>
+          </button>
+        </div>
+
+        <div class="hero-emblem" aria-hidden="true">
+          <div class="emblem-ring"></div>
+          <div class="emblem-troll">♟</div>
+          <div class="emblem-label">TROLL EXPLORER</div>
+        </div>
+      </div>
+
+      <div class="feature-grid">
+        <button class="feature-card" data-screen="map">
+          <span class="feature-icon">⌖</span>
+          <span class="feature-title">Карта</span>
+          <span class="feature-description">
+            Прогуляйся по городу и замкни маршрут, чтобы захватить территорию.
+          </span>
+          <span class="feature-link">Перейти к карте →</span>
+        </button>
+
+        <button class="feature-card" data-screen="character">
+          <span class="feature-icon">♜</span>
+          <span class="feature-title">Персонаж</span>
+          <span class="feature-description">
+            Подбери троллю шлем, броню, цвет кожи и причёску.
+          </span>
+          <span class="feature-link">Настроить тролля →</span>
+        </button>
+
+        <button class="feature-card" data-screen="shop">
+          <span class="feature-icon">✦</span>
+          <span class="feature-title">Магазин</span>
+          <span class="feature-description">
+            Открывай косметические предметы и собирай свой образ.
+          </span>
+          <span class="feature-link">Открыть магазин →</span>
+        </button>
+      </div>
+
+      <div class="home-note">
+        <span class="status-dot"></span>
+        Игровой прогресс и настройки сохраняются в этом браузере.
+      </div>
+    </section>
+
+    <!-- Карта -->
+    <section id="mapScreen" class="screen">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Исследование города</p>
+          <h1>Карта территории</h1>
+        </div>
+        <button class="secondary-button" data-screen="home">← Главное меню</button>
+      </div>
+
+      <div class="map-layout">
+        <div class="map-card">
+          <div class="map-toolbar">
+            <div class="map-status">
+              <span id="gpsDot" class="status-dot"></span>
+              <span id="gpsStatus">Карта готова. Для GPS нужен localhost или HTTPS.</span>
+            </div>
+
+            <div class="map-actions">
+              <button id="locateButton" class="icon-button" title="Моё местоположение">
+                ⌖
+              </button>
+              <button id="landmarksButton" class="secondary-button">
+                Найти достопримечательности
+              </button>
+            </div>
+          </div>
+
+          <div class="map-stage">
+            <div id="mapCanvas" aria-label="Карта города"></div>
+            <div class="map-badge">OPENSTREETMAP</div>
+          </div>
+
+          <div class="map-legend">
+            <span><i class="legend-dot own"></i> Моя территория</span>
+            <span><i class="legend-dot route"></i> Маршрут</span>
+            <span><i class="legend-dot landmark"></i> Важные места</span>
+          </div>
+        </div>
+
+        <aside class="side-panel">
+          <div class="player-card">
+            <div class="avatar-small">T</div>
+            <div>
+              <span class="card-kicker">ИГРОК</span>
+              <strong>Путешественник</strong>
+              <small>Уровень 1</small>
+            </div>
+            <span class="demo-pill">DEMO</span>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span class="stat-icon">▧</span>
+              <small>Моя площадь</small>
+              <strong id="areaValue">0 м²</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon">⌁</span>
+              <small>Пройдено</small>
+              <strong id="distanceValue">0 м</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon">◆</span>
+              <small>Захваты</small>
+              <strong id="captureValue">0</strong>
+            </div>
+            <div class="stat-card">
+              <span class="stat-icon">⚑</span>
+              <small>Игровая зона</small>
+              <strong id="percentValue">0%</strong>
+            </div>
+          </div>
+
+          <div class="panel-card route-card">
+            <div class="card-title-row">
+              <div>
+                <span class="card-kicker">ИГРОВОЙ РЕЖИМ</span>
+                <h2>Захват территории</h2>
+              </div>
+              <span id="routeBadge" class="ready-pill">ГОТОВ</span>
+            </div>
+
+            <p class="muted">
+              Начни маршрут, пройди замкнутый круг и заверши его рядом
+              с точкой старта.
+            </p>
+
+            <div class="progress-track">
+              <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <div class="progress-label">
+              <span id="progressText">0% игровой зоны</span>
+              <span>Минимум 1 000 м²</span>
+            </div>
+
+            <button id="startRouteButton" class="primary-button wide-button">
+              ▶ Начать маршрут
+            </button>
+            <button id="finishRouteButton" class="secondary-button wide-button" disabled>
+              Завершить и захватить
+            </button>
+            <button id="cancelRouteButton" class="text-button" disabled>
+              Отменить маршрут
+            </button>
+
+            <div class="formula-note">
+              Награда: <b>10 монет за каждый 1% новой игровой зоны.</b>
+              В этой версии баланс бесконечный.
+            </div>
+          </div>
+
+          <div class="panel-card landmarks-card">
+            <span class="card-kicker">РЯДОМ</span>
+            <h2>Важные места</h2>
+            <div id="landmarkList" class="landmark-list">
+              <p class="muted">Нажми «Найти достопримечательности» на карте.</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- Персонаж -->
+    <section id="characterScreen" class="screen">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Твой спутник</p>
+          <h1>Персонаж-тролль</h1>
+        </div>
+        <button class="secondary-button" data-screen="home">← Главное меню</button>
+      </div>
+
+      <div class="character-layout">
+        <div class="character-preview panel-card">
+          <div class="preview-heading">
+            <div>
+              <span class="card-kicker">3D-ПЕРСОНАЖ</span>
+              <h2>Тролль-путешественник</h2>
+            </div>
+            <span class="demo-pill">ПРОСМОТР</span>
+          </div>
+
+          <div id="trollStage" class="troll-stage">
+            <div class="stage-glow"></div>
+            <div id="trollCanvas" class="troll-canvas"></div>
+            <div class="stage-caption">ПЕРЕТАЩИ, ЧТОБЫ ПОВЕРНУТЬ</div>
+          </div>
+        </div>
+
+        <div class="character-controls panel-card">
+          <span class="card-kicker">ВНЕШНОСТЬ</span>
+          <h2>Настрой своего тролля</h2>
+
+          <label class="field-label" for="helmetSelect">Шлем</label>
+          <select id="helmetSelect" class="select-control"></select>
+
+          <label class="field-label" for="armorSelect">Броня</label>
+          <select id="armorSelect" class="select-control"></select>
+
+          <label class="field-label" for="skinSelect">Цвет кожи</label>
+          <select id="skinSelect" class="select-control">
+            <option value="moss">Мшисто-зелёный</option>
+            <option value="stone">Серо-каменный</option>
+            <option value="olive">Оливковый</option>
+          </select>
+
+          <label class="field-label" for="hairSelect">Волосы</label>
+          <select id="hairSelect" class="select-control">
+            <option value="dark">Тёмные</option>
+            <option value="gray">Седые</option>
+            <option value="red">Рыжие</option>
+          </select>
+
+          <button class="primary-button wide-button" data-screen="shop">
+            Открыть магазин косметики
+          </button>
+          <p class="muted small-note">
+            Перетаскивай модель мышью или пальцем, чтобы вращать её.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Магазин -->
+    <section id="shopScreen" class="screen">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Косметика для героя</p>
+          <h1>Магазин</h1>
+        </div>
+        <button class="secondary-button" data-screen="home">← Главное меню</button>
+      </div>
+
+      <div class="shop-banner">
+        <div>
+          <span class="card-kicker">БЕСКОНЕЧНЫЙ БАЛАНС</span>
+          <h2>Выбирай любой образ</h2>
+          <p>Косметические предметы открываются бесплатно в этой версии.</p>
+        </div>
+        <div class="shop-infinity">∞ <small>монет</small></div>
+      </div>
+
+      <div id="shopItems" class="shop-grid"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="back.js"></script>
+</body>
+</html>
