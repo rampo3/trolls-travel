@@ -1234,12 +1234,41 @@ async function findLandmarks() {
   list.innerHTML = '<p class="muted">Ищу места в OpenStreetMap…</p>';
 
   try {
-    const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-    const response = await fetch(url);
+    const endpoints = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.private.coffee/api/interpreter"
+    ];
+    let data = null;
+    let lastError = null;
 
-    if (!response.ok) throw new Error("Overpass API error");
+    for (let index = 0; index < endpoints.length; index += 1) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
+      try {
+        if (index > 0) {
+          list.innerHTML = '<p class="muted">Первый сервер не ответил, пробую запасной…</p>';
+        }
 
-    const data = await response.json();
+        const response = await fetch(endpoints[index], {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: new URLSearchParams({ data: query }),
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`Overpass API: HTTP ${response.status}`);
+
+        const result = await response.json();
+        if (result.remark) throw new Error(result.remark);
+        data = result;
+        break;
+      } catch (error) {
+        lastError = error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    if (!data) throw lastError || new Error("Overpass API is unavailable");
     const elements = data.elements || [];
 
     landmarkMarkers.forEach(marker => map.removeLayer(marker));
@@ -1303,9 +1332,10 @@ async function findLandmarks() {
     if (!list.children.length) {
       list.innerHTML = '<p class="muted">В этой области важные места не найдены.</p>';
     }
-  } catch {
+  } catch (error) {
+    console.warn("Landmark search failed:", error);
     list.innerHTML =
-      '<p class="muted">Не удалось загрузить список. Проверь подключение и попробуй ещё раз.</p>';
+      '<p class="muted">Сервис карты не ответил. Проверь интернет, приблизь карту к району и попробуй ещё раз.</p>';
     showToast("Сервис достопримечательностей временно недоступен.", true);
   }
 }
