@@ -696,6 +696,90 @@ async function refreshOnlineTerritories(showFeedback = false) {
   if (showFeedback) showToast("Общая карта обновлена.");
 }
 
+function isValidTerritoryPoints(points) {
+  return Array.isArray(points)
+    && points.length >= 3
+    && points.length <= 2000
+    && points.every(point => Array.isArray(point)
+      && point.length === 2
+      && Number.isFinite(point[0])
+      && Number.isFinite(point[1])
+      && Math.abs(point[0]) <= 90
+      && Math.abs(point[1]) <= 180);
+}
+
+function pointInPolygon(point, polygon) {
+  const [latitude, longitude] = point;
+  let inside = false;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const [latI, lonI] = polygon[i];
+    const [latJ, lonJ] = polygon[j];
+    const crosses = (lonI > longitude) !== (lonJ > longitude)
+      && latitude < ((latJ - latI) * (longitude - lonI)) / (lonJ - lonI) + latI;
+    if (crosses) inside = !inside;
+  }
+
+  return inside;
+}
+
+function polygonCoversPolygon(outerPoints, innerPoints) {
+  if (!isValidTerritoryPoints(outerPoints) || !isValidTerritoryPoints(innerPoints)) return false;
+
+  const inner = [...innerPoints];
+  const first = inner[0];
+  const last = inner[inner.length - 1];
+  if (first[0] === last[0] && first[1] === last[1]) inner.pop();
+
+  return inner.every((point, index) => {
+    const next = inner[(index + 1) % inner.length];
+    const midpoint = [(point[0] + next[0]) / 2, (point[1] + next[1]) / 2];
+    return pointInPolygon(point, outerPoints) && pointInPolygon(midpoint, outerPoints);
+  });
+}
+
+async function tryEatTerritory(points, area) {
+  if (!onlineClient || !onlineUserId) return null;
+
+  const latitudes = points.map(point => point[0]);
+  const longitudes = points.map(point => point[1]);
+  const minLat = Math.min(...latitudes);
+  const maxLat = Math.max(...latitudes);
+  const minLon = Math.min(...longitudes);
+  const maxLon = Math.max(...longitudes);
+
+  const { data: candidates, error: queryError } = await onlineClient
+    .from("territories")
+    .select("id,user_id,player_tag,area_m2,points")
+    .neq("user_id", onlineUserId)
+    // Local planar area can differ slightly from PostGIS geodesic area;
+    // the server remains the authority for the actual size check.
+    .lt("area_m2", Math.ceil(area * 1.02))
+    .gte("max_lat", minLat)
+    .lte("min_lat", maxLat)
+    .gte("max_lon", minLon)
+    .lte("min_lon", maxLon)
+    .order("area_m2", { ascending: false })
+    .limit(100);
+
+  if (queryError) return { error: queryError };
+
+  const contained = (candidates || [])
+    .filter(zone => polygonCoversPolygon(points, zone.points));
+
+  for (const target of contained) {
+    const { data, error } = await onlineClient.rpc("consume_territory", {
+      p_target_id: target.id,
+      p_attack_points: points
+    });
+
+    if (error) return { error };
+    if (data?.eaten) return data;
+  }
+
+  return null;
+}
+
 async function publishTerritory(points, area) {
   if (!onlineClient || !onlineUserId) {
     setOnlineStatus("Общая карта не подключена: захват сохранён только на этом устройстве.", true);
@@ -945,7 +1029,7 @@ function stopGpsWatch() {
   }
 }
 
-function finishRoute() {
+async function finishRoute() {
   if (!tracking) return;
 
   tracking = false;
@@ -979,6 +1063,25 @@ function finishRoute() {
     return;
   }
 
+  if (game.shareTerritories && onlineClient) {
+    setOnlineStatus("Проверяю, можно ли поглотить чужую территорию…");
+    const result = await tryEatTerritory(polygonPoints, area);
+
+    if (result?.eaten) {
+      captureTerritory(polygonPoints, area, {
+        publish: false,
+        eatenPlayer: result.target_player_tag
+      });
+      await refreshOnlineTerritories();
+      return;
+    }
+
+    if (result?.error) {
+      console.error("Territory eating failed:", result.error);
+      showToast("Не получилось поглотить чужую зону. Захват будет обычным.", true);
+    }
+  }
+
   captureTerritory(polygonPoints, area);
 }
 
@@ -993,7 +1096,7 @@ function cancelRoute() {
   updateMapStats();
 }
 
-function captureTerritory(points, area) {
+function captureTerritory(points, area, options = {}) {
   const previousPercent = Math.min(
     100,
     (game.capturedArea / PLAYABLE_WORLD_AREA_M2) * 100
@@ -1022,12 +1125,18 @@ function captureTerritory(points, area) {
   saveState();
   updateMapStats();
 
-  setGpsStatus(
-    `Территория захвачена: ${formatArea(area)}. Получено ${reward} монет.`,
-    "ok"
-  );
-  showToast(`Территория захвачена! ${formatArea(area)} · +${reward} монет.`);
-  if (game.shareTerritories) publishTerritory(points, area);
+  if (options.eatenPlayer) {
+    setGpsStatus(`Ты поглотил территорию игрока ${options.eatenPlayer}!`, "ok");
+    showToast(`Территория ${options.eatenPlayer} поглощена!`);
+  } else {
+    setGpsStatus(
+      `Территория захвачена: ${formatArea(area)}. Получено ${reward} монет.`,
+      "ok"
+    );
+    showToast(`Территория захвачена! ${formatArea(area)} · +${reward} монет.`);
+  }
+
+  if (game.shareTerritories && options.publish !== false) publishTerritory(points, area);
 }
 
 function addCapturedPolygon(points, fitBounds) {
