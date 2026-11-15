@@ -202,6 +202,23 @@
               Награда: <b>10 монет за каждый 1% новой игровой зоны.</b>
               В этой версии баланс бесконечный.
             </div>
+
+            <div class="online-card">
+              <span class="card-kicker">ОБЩИЙ МИР</span>
+              <p id="onlineStatus" class="online-status" role="status">
+                Онлайн-карта не настроена.
+              </p>
+              <label class="online-consent" for="shareTerritoriesToggle">
+                <input id="shareTerritoriesToggle" type="checkbox">
+                <span>
+                  <strong>Публиковать мои захваты</strong>
+                  <small>Точные границы станут видны всем игрокам.</small>
+                </span>
+              </label>
+              <button id="refreshOnlineButton" class="secondary-button wide-button" type="button">
+                Обновить чужие территории
+              </button>
+            </div>
           </div>
 
           <div class="panel-card landmarks-card">
@@ -303,6 +320,8 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="online-config.js"></script>
   <script src="back.js"></script>
 </body>
 </html>
