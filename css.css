@@ -660,6 +660,64 @@ main {
   color: var(--gold);
 }
 
+.online-card {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid rgba(139, 120, 255, 0.28);
+  border-radius: 13px;
+  background: rgba(139, 120, 255, 0.06);
+}
+
+.online-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.online-status.error {
+  color: var(--danger);
+}
+
+.online-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.online-consent input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 1px 0 0;
+  accent-color: #8b78ff;
+}
+
+.online-consent strong,
+.online-consent small {
+  display: block;
+}
+
+.online-consent strong {
+  font-size: 11px;
+}
+
+.online-consent small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.online-card .secondary-button {
+  min-height: 42px;
+  font-size: 11px;
+}
+
 .landmarks-card h2 {
   margin-bottom: 12px;
 }
