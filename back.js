@@ -691,32 +691,78 @@ async function refreshOnlineTerritories(showFeedback = false) {
   }
 
   onlineTerritoriesLayer.clearLayers();
-  let visibleCount = 0;
+  const territoriesByPlayer = new Map();
 
   (data || []).forEach(zone => {
     if (zone.user_id === onlineUserId) return;
-    let polygon;
-    const style = territoryStyleForPlayer(zone.user_id);
-
-    if (zone.geometry_json) {
-      if (!isValidTerritoryGeometry(zone.geometry_json)) return;
-      polygon = L.geoJSON(zone.geometry_json, { style });
-    } else {
-      if (!isValidTerritoryPoints(zone.points)) return;
-      polygon = L.polygon(zone.points, style);
-    }
-
-    const player = escapeHtml(zone.player_tag || "Путник");
-    const area = formatArea(Number(zone.area_m2) || 0);
-    const created = new Date(zone.created_at).toLocaleDateString("ru-RU");
-    polygon.bindPopup(`<b>${player}</b><br>${area}<br><small>${created}</small>`);
-    onlineTerritoriesLayer.addLayer(polygon);
-    visibleCount += 1;
+    if (typeof zone.user_id !== "string" || !territoryCoordinatePolygons(zone)) return;
+    if (!territoriesByPlayer.has(zone.user_id)) territoriesByPlayer.set(zone.user_id, []);
+    territoriesByPlayer.get(zone.user_id).push(zone);
   });
 
-  setOnlineStatus(visibleCount
-    ? `На этой области карты чужих территорий: ${visibleCount}.`
-    : "В этой области карты чужих территорий пока нет.");
+  let mergeFailures = 0;
+  territoriesByPlayer.forEach((zones, userId) => {
+    try {
+      const coordinates = zones.flatMap(territoryCoordinatePolygons);
+      const allPoints = coordinates.flat(2);
+      const originLat = allPoints.reduce((sum, point) => sum + point[1], 0) / allPoints.length;
+      const originLon = allPoints[0][0];
+      const radius = 6378137;
+      const latitudeScale = Math.cos(originLat * Math.PI / 180);
+      const toMeters = ([longitude, latitude]) => [
+        radius * (longitude - originLon) * Math.PI / 180 * latitudeScale,
+        radius * (latitude - originLat) * Math.PI / 180
+      ];
+      const toCoordinates = ([x, y]) => [
+        originLon + x / (radius * latitudeScale) * 180 / Math.PI,
+        originLat + y / radius * 180 / Math.PI
+      ];
+      const clipping = window.polygonClipping;
+      if (!clipping) throw new Error("Не загрузилась библиотека объединения территорий.");
+
+      const mergedGeometry = clipping.union(
+        ...coordinates.map(polygon => polygon.map(ring => ring.map(toMeters)))
+      );
+      const geoJson = {
+        type: "MultiPolygon",
+        coordinates: mergedGeometry.map(polygon =>
+          polygon.map(ring => ring.map(toCoordinates)))
+      };
+      if (!isValidTerritoryGeometry(geoJson)) {
+        throw new Error("Объединённая геометрия чужой территории некорректна.");
+      }
+
+      const layer = L.geoJSON(geoJson, {
+        style: territoryStyleForPlayer(userId)
+      });
+      const area = formatArea(clippedGeometryArea(mergedGeometry));
+      const player = escapeHtml(zones[0].player_tag || "Путник");
+      layer.bindPopup(`<b>${player}</b><br>${area}<br><small>Объединённая территория</small>`);
+      onlineTerritoriesLayer.addLayer(layer);
+    } catch (mergeError) {
+      console.error("Online territory outlines could not be merged:", mergeError);
+      mergeFailures += 1;
+
+      zones.forEach(zone => {
+        const style = territoryStyleForPlayer(userId);
+        const layer = zone.geometry_json
+          ? L.geoJSON(zone.geometry_json, { style })
+          : L.polygon(zone.points, style);
+        layer.bindPopup(`<b>${escapeHtml(zone.player_tag || "Путник")}</b><br>${formatArea(Number(zone.area_m2) || 0)}`);
+        onlineTerritoriesLayer.addLayer(layer);
+      });
+    }
+  });
+
+  if (mergeFailures > 0) {
+    setOnlineStatus(`Не удалось объединить территории ${mergeFailures} игроков. Отдельные зоны показаны по отдельности.`, true);
+  } else {
+    setOnlineStatus(
+      territoriesByPlayer.size
+        ? `На этой области карты чужих игроков: ${territoriesByPlayer.size}.`
+        : "В этой области карты чужих территорий пока нет."
+    );
+  }
   if (showFeedback) showToast("Общая карта обновлена.");
 }
 
@@ -781,6 +827,24 @@ function isValidTerritoryGeometry(geometry) {
           && Number.isFinite(point[1])
           && Math.abs(point[0]) <= 180
           && Math.abs(point[1]) <= 90)));
+}
+
+function territoryCoordinatePolygons(zone) {
+  if (zone.geometry_json) {
+    if (!isValidTerritoryGeometry(zone.geometry_json)) return null;
+    return zone.geometry_json.type === "Polygon"
+      ? [zone.geometry_json.coordinates]
+      : zone.geometry_json.coordinates;
+  }
+  if (!isValidTerritoryPoints(zone.points)) return null;
+
+  let ring = zone.points.map(([latitude, longitude]) => [longitude, latitude]);
+  const first = ring[0];
+  const last = ring[ring.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) {
+    ring = [...ring, [...first]];
+  }
+  return [[ring]];
 }
 
 async function tryEatTerritory(points) {
