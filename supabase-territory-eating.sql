@@ -187,19 +187,26 @@ begin
     where id = target.id;
   end if;
 
-  insert into public.territories (
-    user_id, player_tag, area_m2, points,
-    min_lat, max_lat, min_lon, max_lon
-  ) values (
-    current_user_id,
-    attacker_tag,
-    round(attack_area)::integer,
-    p_attack_points,
-    (select min(value) from unnest(attack_latitudes) as value),
-    (select max(value) from unnest(attack_latitudes) as value),
-    (select min(value) from unnest(attack_longitudes) as value),
-    (select max(value) from unnest(attack_longitudes) as value)
-  );
+  if not exists (
+    select 1
+    from public.territories
+    where user_id = current_user_id
+      and points = p_attack_points
+  ) then
+    insert into public.territories (
+      user_id, player_tag, area_m2, points,
+      min_lat, max_lat, min_lon, max_lon
+    ) values (
+      current_user_id,
+      attacker_tag,
+      round(attack_area)::integer,
+      p_attack_points,
+      (select min(value) from unnest(attack_latitudes) as value),
+      (select max(value) from unnest(attack_latitudes) as value),
+      (select min(value) from unnest(attack_longitudes) as value),
+      (select max(value) from unnest(attack_longitudes) as value)
+    );
+  end if;
 
   return jsonb_build_object(
     'eaten', true,
