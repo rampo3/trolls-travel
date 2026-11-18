@@ -13,7 +13,7 @@
         href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="css.css">
 </head>
-<body>
+<body class="auth-landing">
   <header class="topbar">
     <a class="brand" href="#" data-screen="home" aria-label="На главный экран">
       <span class="brand-mark">T</span>
@@ -25,6 +25,7 @@
       <button class="nav-button" data-screen="map">Карта</button>
       <button class="nav-button" data-screen="character">Персонаж</button>
       <button class="nav-button" data-screen="shop">Магазин</button>
+      <button id="accountNavButton" class="nav-button" data-screen="auth" hidden>Войти</button>
     </nav>
 
     <div class="wallet" title="В этой версии монеты бесконечные">
@@ -35,8 +36,48 @@
   </header>
 
   <main>
+    <section id="authScreen" class="screen auth-screen active">
+      <div class="auth-card">
+        <p class="eyebrow">TROLLS TRAVEL</p>
+        <h1>Добро пожаловать</h1>
+        <p class="muted">
+          Войди в аккаунт или создай его, чтобы сохранить своего игрока и опубликованные территории.
+        </p>
+        <div class="auth-panel">
+          <p id="authStatus" class="online-status" role="status">
+            Подключаю игрока…
+          </p>
+          <div id="authFields">
+            <label class="field-label" for="authEmail">Электронная почта</label>
+            <input id="authEmail" class="auth-input" type="email" autocomplete="email"
+                   placeholder="name@example.com" required>
+            <label class="field-label" for="authPassword">Пароль</label>
+            <input id="authPassword" class="auth-input" type="password"
+                   autocomplete="new-password" minlength="8"
+                   placeholder="Не менее 8 символов" required>
+            <button id="registerAccountButton" class="primary-button wide-button" type="button">
+              Создать аккаунт
+            </button>
+            <button id="loginAccountButton" class="secondary-button wide-button" type="button">
+              Войти в существующий аккаунт
+            </button>
+          </div>
+          <button id="logoutAccountButton" class="secondary-button wide-button"
+                  type="button" hidden>
+            Выйти из аккаунта
+          </button>
+          <button id="continueGuestButton" class="text-button wide-button" type="button" hidden>
+            Продолжить как гость
+          </button>
+        </div>
+        <p class="auth-note">
+          Регистрация сохранит текущего анонимного игрока. Гостевой режим доступен без аккаунта.
+        </p>
+      </div>
+    </section>
+
     <!-- Главное меню -->
-    <section id="homeScreen" class="screen active">
+    <section id="homeScreen" class="screen">
       <div class="hero">
         <div class="hero-copy">
           <p class="eyebrow">Исследуй город. Создавай легенды.</p>
@@ -210,31 +251,6 @@
               <p id="onlineStatus" class="online-status" role="status">
                 Онлайн-карта не настроена.
               </p>
-              <div class="auth-panel">
-                <span class="card-kicker">АККАУНТ ИГРОКА</span>
-                <p id="authStatus" class="online-status" role="status">
-                  Подключаю игрока…
-                </p>
-                <div id="authFields">
-                  <label class="field-label" for="authEmail">Электронная почта</label>
-                  <input id="authEmail" class="auth-input" type="email" autocomplete="email"
-                         placeholder="name@example.com" required>
-                  <label class="field-label" for="authPassword">Пароль</label>
-                  <input id="authPassword" class="auth-input" type="password"
-                         autocomplete="new-password" minlength="8"
-                         placeholder="Не менее 8 символов" required>
-                  <button id="registerAccountButton" class="primary-button wide-button" type="button">
-                    Создать аккаунт и сохранить игрока
-                  </button>
-                  <button id="loginAccountButton" class="secondary-button wide-button" type="button">
-                    Войти в существующий аккаунт
-                  </button>
-                </div>
-                <button id="logoutAccountButton" class="secondary-button wide-button"
-                        type="button" hidden>
-                  Выйти из аккаунта
-                </button>
-              </div>
               <label class="online-consent" for="shareTerritoriesToggle">
                 <input id="shareTerritoriesToggle" type="checkbox">
                 <span>

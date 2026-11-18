@@ -157,6 +157,62 @@ main {
   display: block;
 }
 
+.auth-screen.active {
+  display: grid;
+  min-height: calc(100vh - 76px);
+  place-items: center;
+}
+
+.auth-card {
+  width: min(440px, 100%);
+  padding: clamp(22px, 5vw, 36px);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background:
+    radial-gradient(ellipse at 85% 0%, rgba(216, 177, 94, 0.1), transparent 18rem),
+    var(--panel);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.36);
+}
+
+.auth-card h1 {
+  margin: 8px 0;
+  font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  font-size: clamp(30px, 6vw, 40px);
+}
+
+.auth-card > .muted {
+  margin: 0 0 20px;
+}
+
+.auth-card .auth-panel {
+  padding: 14px;
+}
+
+.auth-note {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+body.auth-landing .topbar {
+  justify-content: center;
+}
+
+body.auth-landing .topnav,
+body.auth-landing .wallet {
+  display: none;
+}
+
+body.auth-landing main {
+  display: grid;
+  width: 100%;
+  min-height: calc(100vh - 76px);
+  padding: 24px;
+  place-items: center;
+}
+
 @keyframes appear {
   from { opacity: 0; transform: translateY(5px); }
   to { opacity: 1; transform: translateY(0); }
