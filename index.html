@@ -47,6 +47,57 @@
           <p id="authStatus" class="online-status" role="status">
             Подключаю игрока…
           </p>
+          <div class="profile-settings">
+            <h2>Настройки игрока</h2>
+            <label class="field-label" for="playerNicknameInput">Желаемый никнейм</label>
+            <input id="playerNicknameInput" class="auth-input" type="text"
+                   autocomplete="nickname" minlength="2" maxlength="24" required
+                   placeholder="Например, Путешественник">
+            <span id="territoryColorLabel" class="field-label">Цвет территории</span>
+            <input id="territoryColorInput" type="hidden" value="#35ddb0">
+            <div id="territoryColorPalette" class="territory-palette" role="radiogroup"
+                 aria-labelledby="territoryColorLabel">
+              <label class="territory-color-option">
+                <input type="radio" name="territoryColorChoice" value="#35ddb0">
+                <span class="territory-color-swatch" style="--territory-color: #35ddb0"></span>
+                <span class="territory-color-name">Бирюзовый</span>
+              </label>
+              <label class="territory-color-option">
+                <input type="radio" name="territoryColorChoice" value="#4f8dff">
+                <span class="territory-color-swatch" style="--territory-color: #4f8dff"></span>
+                <span class="territory-color-name">Синий</span>
+              </label>
+              <label class="territory-color-option">
+                <input type="radio" name="territoryColorChoice" value="#ef6262">
+                <span class="territory-color-swatch" style="--territory-color: #ef6262"></span>
+                <span class="territory-color-name">Красный</span>
+              </label>
+              <label class="territory-color-option">
+                <input type="radio" name="territoryColorChoice" value="#b66cff">
+                <span class="territory-color-swatch" style="--territory-color: #b66cff"></span>
+                <span class="territory-color-name">Фиолетовый</span>
+              </label>
+              <label class="territory-color-option">
+                <input type="radio" name="territoryColorChoice" value="#f5a623">
+                <span class="territory-color-swatch" style="--territory-color: #f5a623"></span>
+                <span class="territory-color-name">Оранжевый</span>
+              </label>
+              <label class="territory-color-option">
+                <input type="radio" name="territoryColorChoice" value="#f1d34e">
+                <span class="territory-color-swatch" style="--territory-color: #f1d34e"></span>
+                <span class="territory-color-name">Жёлтый</span>
+              </label>
+              <label class="territory-color-option">
+                <input type="radio" name="territoryColorChoice" value="#ff6fb1">
+                <span class="territory-color-swatch" style="--territory-color: #ff6fb1"></span>
+                <span class="territory-color-name">Розовый</span>
+              </label>
+            </div>
+            <button id="saveProfileButton" class="secondary-button wide-button" type="button">
+              Сохранить настройки
+            </button>
+            <p class="profile-settings-note">Цвет будет применяться к твоим захватам на карте.</p>
+          </div>
           <div id="authFields">
             <label class="field-label" for="authEmail">Электронная почта</label>
             <input id="authEmail" class="auth-input" type="email" autocomplete="email"
@@ -177,8 +228,7 @@
           <div class="player-card">
             <div class="avatar-small">T</div>
             <div>
-              <span class="card-kicker">ИГРОК</span>
-              <strong>Путешественник</strong>
+              <strong id="playerNickname">Путешественник</strong>
               <small>Уровень 1</small>
             </div>
             <span class="demo-pill">DEMO</span>
