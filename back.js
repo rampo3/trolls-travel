@@ -772,8 +772,9 @@ function territoryStyleForPlayer(userId) {
       color: "#1ba782",
       weight: 0,
       opacity: 0,
+      stroke: false,
       fillColor: "#35ddb0",
-      fillOpacity: 0.3
+      fillOpacity: 1
     };
   }
 
@@ -791,8 +792,9 @@ function territoryStyleForPlayer(userId) {
     color: `hsl(${hue}, ${saturation}%, ${lightness - 13}%)`,
     weight: 0,
     opacity: 0,
+    stroke: false,
     fillColor: `hsl(${hue}, ${saturation}%, ${lightness + 15}%)`,
-    fillOpacity: 0.3
+    fillOpacity: 1
   };
 }
 
@@ -1649,6 +1651,7 @@ function redrawCapturedTerritories(fitBounds) {
     }
 
     capturedTerritoriesLayer.clearLayers();
+    capturedTerritoriesLayer.setStyle(style);
     capturedTerritoriesLayer.addData(geometry);
     if (fitBounds) {
       map.fitBounds(capturedTerritoriesLayer.getBounds(), { padding: [36, 36] });
