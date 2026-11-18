@@ -6,6 +6,7 @@ const COINS_PER_PERCENT = 10;
 const MIN_CAPTURE_AREA_M2 = 1_000;
 const ROUTE_CLOSE_DISTANCE_M = 50;
 const MAX_ROUTE_SPEED_MPS = 5;
+const TERRITORY_SIMPLIFY_TOLERANCE_M = 8;
 const TERRITORY_SHARING_CONSENT_VERSION = 1;
 
 const defaultState = {
@@ -916,6 +917,98 @@ function median(values) {
     : sorted[middle];
 }
 
+function simplifyOpenPath(points, tolerance) {
+  if (points.length <= 2) return points;
+
+  const keep = new Uint8Array(points.length);
+  keep[0] = 1;
+  keep[points.length - 1] = 1;
+  const ranges = [[0, points.length - 1]];
+
+  while (ranges.length > 0) {
+    const [startIndex, endIndex] = ranges.pop();
+    const start = points[startIndex];
+    const end = points[endIndex];
+    const segmentX = end[0] - start[0];
+    const segmentY = end[1] - start[1];
+    const segmentLengthSquared = segmentX ** 2 + segmentY ** 2;
+    let farthestDistance = tolerance;
+    let farthestIndex = -1;
+
+    for (let index = startIndex + 1; index < endIndex; index += 1) {
+      const point = points[index];
+      const projection = segmentLengthSquared === 0
+        ? 0
+        : Math.max(0, Math.min(1, (
+          (point[0] - start[0]) * segmentX
+          + (point[1] - start[1]) * segmentY
+        ) / segmentLengthSquared));
+      const distance = Math.hypot(
+        point[0] - (start[0] + projection * segmentX),
+        point[1] - (start[1] + projection * segmentY)
+      );
+
+      if (distance > farthestDistance) {
+        farthestDistance = distance;
+        farthestIndex = index;
+      }
+    }
+
+    if (farthestIndex !== -1) {
+      keep[farthestIndex] = 1;
+      ranges.push([startIndex, farthestIndex], [farthestIndex, endIndex]);
+    }
+  }
+
+  return points.filter((point, index) => keep[index]);
+}
+
+function simplifyTerritoryOutline(points) {
+  const ringPoints = points.map(point => [point[0], point[1]]);
+  if (ringPoints.length > 1
+    && ringPoints[0][0] === ringPoints[ringPoints.length - 1][0]
+    && ringPoints[0][1] === ringPoints[ringPoints.length - 1][1]) {
+    ringPoints.pop();
+  }
+  if (ringPoints.length < 4) return ringPoints;
+
+  const originLat = ringPoints.reduce((sum, point) => sum + point[0], 0) / ringPoints.length;
+  const originLon = ringPoints[0][1];
+  const radius = 6378137;
+  const latitudeScale = Math.cos(originLat * Math.PI / 180);
+  const projectedPoints = ringPoints.map(point => [
+    radius * (point[1] - originLon) * Math.PI / 180 * latitudeScale,
+    radius * (point[0] - originLat) * Math.PI / 180
+  ]);
+
+  let pivotIndex = 1;
+  let farthestDistanceSquared = 0;
+  projectedPoints.forEach((point, index) => {
+    const distanceSquared = (point[0] - projectedPoints[0][0]) ** 2
+      + (point[1] - projectedPoints[0][1]) ** 2;
+    if (distanceSquared > farthestDistanceSquared) {
+      farthestDistanceSquared = distanceSquared;
+      pivotIndex = index;
+    }
+  });
+
+  const firstArc = simplifyOpenPath(
+    projectedPoints.slice(0, pivotIndex + 1),
+    TERRITORY_SIMPLIFY_TOLERANCE_M
+  );
+  const secondArc = simplifyOpenPath(
+    [...projectedPoints.slice(pivotIndex), projectedPoints[0]],
+    TERRITORY_SIMPLIFY_TOLERANCE_M
+  );
+  const simplified = [...firstArc, ...secondArc.slice(1, -1)];
+  if (simplified.length < 3) return ringPoints;
+
+  return simplified.map(point => [
+    originLat + point[1] / radius * 180 / Math.PI,
+    originLon + point[0] / (radius * latitudeScale) * 180 / Math.PI
+  ]);
+}
+
 function polygonAreaMeters(points) {
   if (points.length < 3) return 0;
 
@@ -1178,7 +1271,7 @@ function startRoute() {
   tracking = true;
   routeLine.setLatLngs([]);
   setRouteButtons();
-  setGpsStatus("Маршрут записывается. Пройди замкнутый круг.", "ok");
+  setGpsStatus("Маршрут записывается. Пройди и замкни контур.", "ok");
 
   watchId = navigator.geolocation.watchPosition(
     onPositionUpdate,
@@ -1287,13 +1380,14 @@ async function finishRoute() {
     return;
   }
 
-  const polygonPoints = [...routePoints];
-  if (gap > 2) polygonPoints.push(start);
+  const pointsToCapture = [...routePoints];
+  if (gap > 2) pointsToCapture.push(start);
+  const polygonPoints = simplifyTerritoryOutline(pointsToCapture);
 
   const area = polygonAreaMeters(polygonPoints);
 
   if (area < MIN_CAPTURE_AREA_M2) {
-    setGpsStatus("Площадь круга меньше минимальной.", "error");
+    setGpsStatus("Площадь участка меньше минимальной.", "error");
     showToast(`Нужна площадь не меньше ${MIN_CAPTURE_AREA_M2} м².`, true);
     return;
   }
@@ -1372,6 +1466,7 @@ function captureTerritory(points, area, newArea, options = {}) {
     points: points.map(point => [point[0], point[1]])
   });
 
+  routeLine?.setLatLngs([...points, points[0]]);
   addCapturedPolygon(points, true);
   saveState();
   updateMapStats();
