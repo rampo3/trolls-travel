@@ -5,6 +5,7 @@ const PLAYABLE_WORLD_AREA_M2 = 5_000_000;
 const COINS_PER_PERCENT = 10;
 const MIN_CAPTURE_AREA_M2 = 1_000;
 const ROUTE_CLOSE_DISTANCE_M = 50;
+const MAX_ROUTE_SPEED_MPS = 5;
 const TERRITORY_SHARING_CONSENT_VERSION = 1;
 
 const defaultState = {
@@ -556,6 +557,7 @@ let routeLine = null;
 let watchId = null;
 let tracking = false;
 let routePoints = [];
+let routeFixes = [];
 let routeDistance = 0;
 let lastRoutePointAt = 0;
 let lastRouteAccuracy = 0;
@@ -868,7 +870,8 @@ function initializeMap() {
     weight: 5,
     opacity: 0.9,
     lineCap: "round",
-    lineJoin: "round"
+    lineJoin: "round",
+    smoothFactor: 0
   }).addTo(map);
 
   game.capturedZones.forEach(zone => {
@@ -903,6 +906,14 @@ function distanceMeters(a, b) {
     + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
 
   return radius * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
 }
 
 function polygonAreaMeters(points) {
@@ -1160,6 +1171,7 @@ function startRoute() {
   }
 
   routePoints = [];
+  routeFixes = [];
   routeDistance = 0;
   lastRoutePointAt = 0;
   lastRouteAccuracy = 0;
@@ -1192,29 +1204,50 @@ function onPositionUpdate(position) {
   }
 
   if (!Number.isFinite(accuracy) || accuracy > 40) {
+    routeFixes = [];
     if (tracking) setGpsStatus("Сигнал GPS неточный. Подожди точность не хуже 40 м.");
     updateMapStats();
     return;
   }
 
   const receivedAt = Number(position.timestamp) || Date.now();
+  routeFixes.push(point);
+  if (routeFixes.length > 3) routeFixes.shift();
+
+  if (routePoints.length === 0 && routeFixes.length < 3) {
+    setGpsStatus("Уточняю GPS перед началом записи маршрута…", "ok");
+    updateMapStats();
+    return;
+  }
+
+  const filteredPoint = [
+    median(routeFixes.map(fix => fix[0])),
+    median(routeFixes.map(fix => fix[1]))
+  ];
+
   if (routePoints.length === 0) {
-    routePoints.push(point);
+    routePoints.push(filteredPoint);
     lastRoutePointAt = receivedAt;
     lastRouteAccuracy = accuracy;
-    map.setView(point, Math.max(map.getZoom(), 16));
+    map.setView(filteredPoint, Math.max(map.getZoom(), 16));
   } else {
     const lastPoint = routePoints[routePoints.length - 1];
-    const stepDistance = distanceMeters(lastPoint, point);
+    const stepDistance = distanceMeters(lastPoint, filteredPoint);
     const elapsedSeconds = Math.max(1, (receivedAt - lastRoutePointAt) / 1000);
-    const plausibleStep = Math.max(45, elapsedSeconds * 12 + accuracy + lastRouteAccuracy);
+    const accuracyAllowance = Math.min(15, accuracy + lastRouteAccuracy);
+    const plausibleStep = Math.max(
+      15,
+      elapsedSeconds * MAX_ROUTE_SPEED_MPS + accuracyAllowance
+    );
 
-    // Игнорируем GPS-скачки и не добавляем точки, объяснимые обычным шумом.
+    // Median-filtered fixes and a walking-speed cap prevent isolated GPS jumps
+    // from stretching the visible route across the map.
     if (stepDistance > plausibleStep) {
+      routeFixes = [];
       setGpsStatus("GPS дал скачок координат — пропустил точку, продолжаю запись.");
-    } else if (stepDistance >= Math.max(3, Math.min(8, accuracy * 0.12))) {
+    } else if (stepDistance >= Math.max(3, Math.min(6, accuracy * 0.1))) {
       routeDistance += stepDistance;
-      routePoints.push(point);
+      routePoints.push(filteredPoint);
       lastRoutePointAt = receivedAt;
       lastRouteAccuracy = accuracy;
     }
