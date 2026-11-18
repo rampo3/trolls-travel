@@ -1,16 +1,16 @@
 :root {
   color-scheme: dark;
-  --bg: #0c1420;
-  --panel: #121e2e;
-  --panel-2: #17263a;
-  --line: #283a50;
-  --text: #f4f7fb;
-  --muted: #9baec4;
-  --accent: #36e0b1;
-  --accent-2: #6a7df5;
-  --gold: #ffd36a;
-  --danger: #ff7280;
-  --radius: 20px;
+  --bg: #0d0e0b;
+  --panel: #171812;
+  --panel-2: #202118;
+  --line: #403b2b;
+  --text: #eee7d2;
+  --muted: #b2a98e;
+  --accent: #8ab28b;
+  --accent-2: #9a7cae;
+  --gold: #d8b15e;
+  --danger: #e87870;
+  --radius: 16px;
   font-family: Inter, "Segoe UI", Arial, sans-serif;
 }
 
@@ -28,8 +28,9 @@ body {
   margin: 0;
   color: var(--text);
   background:
-    radial-gradient(circle at 15% 0%, rgba(54, 224, 177, 0.08), transparent 28rem),
-    radial-gradient(circle at 95% 15%, rgba(106, 125, 245, 0.11), transparent 30rem),
+    radial-gradient(ellipse at 12% 0%, rgba(121, 145, 91, 0.12), transparent 30rem),
+    radial-gradient(ellipse at 92% 18%, rgba(169, 123, 61, 0.08), transparent 34rem),
+    linear-gradient(145deg, rgba(43, 39, 27, 0.18), transparent 45%),
     var(--bg);
 }
 
@@ -1311,4 +1312,249 @@ main {
     height: 68dvh;
     min-height: 280px;
   }
+}
+
+/* Dark-fantasy palette and materials */
+
+body {
+  background-attachment: fixed;
+}
+
+.topbar {
+  border-bottom-color: rgba(216, 177, 94, 0.2);
+  background: rgba(13, 14, 11, 0.94);
+}
+
+.brand-mark,
+.avatar-small {
+  border: 1px solid rgba(226, 195, 126, 0.34);
+  background: linear-gradient(145deg, #66784f, #302a1c 78%);
+  box-shadow: inset 0 1px rgba(255, 239, 190, 0.12), 0 5px 16px rgba(0, 0, 0, 0.3);
+}
+
+.brand-accent,
+.eyebrow,
+.card-kicker {
+  color: #c7a86a;
+}
+
+.nav-button:hover,
+.nav-button.active {
+  color: #f2dfb5;
+  background: linear-gradient(180deg, #28271d, #1c1d16);
+}
+
+.wallet {
+  border-color: rgba(216, 177, 94, 0.32);
+  background: rgba(216, 177, 94, 0.08);
+}
+
+.hero {
+  border-color: #51462e;
+  background:
+    radial-gradient(ellipse at 78% 48%, rgba(126, 147, 87, 0.18), transparent 24rem),
+    radial-gradient(ellipse at 96% 100%, rgba(155, 102, 52, 0.13), transparent 26rem),
+    linear-gradient(115deg, rgba(27, 28, 20, 0.98), rgba(17, 19, 15, 0.96));
+  box-shadow: inset 0 1px rgba(238, 215, 164, 0.07), 0 28px 80px rgba(0, 0, 0, 0.42);
+}
+
+.hero h1,
+.section-heading h1,
+.panel-card h2,
+.preview-heading h2,
+.character-controls h2,
+.shop-banner h2,
+.feature-title,
+.shop-item h3 {
+  font-family: "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  letter-spacing: 0.01em;
+}
+
+.hero h1,
+.section-heading h1 {
+  color: #f1e7ce;
+  text-shadow: 0 2px 18px rgba(216, 177, 94, 0.1);
+}
+
+.primary-button {
+  color: #211a10;
+  background: linear-gradient(115deg, #c49a50, #e2c47e);
+  box-shadow: 0 9px 24px rgba(190, 145, 64, 0.16), inset 0 1px rgba(255, 247, 217, 0.35);
+}
+
+.secondary-button,
+.icon-button {
+  border-color: #514832;
+  background: linear-gradient(180deg, #24251c, #1a1b15);
+}
+
+.secondary-button:hover,
+.icon-button:hover {
+  border-color: rgba(216, 177, 94, 0.58);
+}
+
+.text-button:hover {
+  color: #efb5a2;
+}
+
+.emblem-ring {
+  border-color: rgba(201, 168, 96, 0.42);
+  box-shadow:
+    0 0 0 25px rgba(201, 168, 96, 0.025),
+    0 0 0 50px rgba(201, 168, 96, 0.018),
+    inset 0 0 70px rgba(130, 157, 97, 0.1);
+}
+
+.emblem-troll {
+  border-color: rgba(224, 197, 138, 0.24);
+  color: #e5dfc7;
+  background: linear-gradient(150deg, #627650, #302c20 78%);
+}
+
+.emblem-label,
+.stage-caption {
+  color: #b7a982;
+}
+
+.feature-card,
+.map-card,
+.panel-card,
+.player-card,
+.stat-card,
+.shop-item {
+  border-color: #39372a;
+  background:
+    linear-gradient(145deg, rgba(255, 241, 203, 0.025), transparent 55%),
+    var(--panel);
+  box-shadow: inset 0 1px rgba(239, 225, 190, 0.035);
+}
+
+.feature-card:hover {
+  border-color: rgba(199, 168, 106, 0.55);
+}
+
+.feature-icon,
+.feature-link,
+.stat-icon,
+.icon-button:hover {
+  color: #c6a56a;
+}
+
+.status-dot.ok {
+  background: #91b583;
+  box-shadow: 0 0 12px rgba(145, 181, 131, 0.58);
+}
+
+.demo-pill,
+.ready-pill {
+  border-color: rgba(139, 173, 120, 0.38);
+  color: #a9c592;
+  background: rgba(113, 143, 91, 0.09);
+}
+
+.progress-track {
+  background: #2a291f;
+}
+
+.progress-fill {
+  background: linear-gradient(90deg, #6e936f, #c2a15d);
+}
+
+.formula-note {
+  background: rgba(222, 201, 153, 0.045);
+}
+
+.online-card {
+  border-color: rgba(153, 126, 174, 0.34);
+  background: rgba(96, 72, 111, 0.1);
+}
+
+.online-consent input {
+  accent-color: #bca16c;
+}
+
+.landmark-item {
+  border-color: rgba(193, 176, 132, 0.12);
+  background: rgba(237, 224, 190, 0.025);
+}
+
+.landmark-item:hover {
+  border-color: rgba(199, 168, 106, 0.48);
+}
+
+.landmark-marker {
+  border-color: #d8c99e;
+  background: #28271d;
+}
+
+.troll-stage {
+  border-color: rgba(194, 166, 103, 0.2);
+  background:
+    radial-gradient(ellipse at 50% 77%, rgba(139, 166, 101, 0.16), transparent 38%),
+    radial-gradient(ellipse at 50% 18%, rgba(158, 111, 57, 0.1), transparent 50%),
+    linear-gradient(180deg, #1c1d16, #10110e);
+}
+
+.stage-glow {
+  border-color: rgba(201, 168, 96, 0.2);
+  box-shadow: 0 0 70px rgba(201, 168, 96, 0.07);
+}
+
+.select-control {
+  border-color: #49422f;
+  background: #12130f;
+}
+
+.select-control:focus-visible {
+  border-color: #c7a86a;
+  box-shadow: 0 0 0 3px rgba(199, 168, 106, 0.16);
+}
+
+.shop-banner {
+  border-color: rgba(216, 177, 94, 0.28);
+  background:
+    radial-gradient(ellipse at 85% 50%, rgba(191, 147, 66, 0.14), transparent 16rem),
+    linear-gradient(135deg, #1b1c15, #171812);
+}
+
+.shop-item-preview {
+  background: linear-gradient(140deg, rgba(216, 177, 94, 0.14), rgba(113, 143, 91, 0.12));
+}
+
+.toast {
+  border-color: rgba(145, 181, 131, 0.42);
+  background: #202118;
+}
+
+.leaflet-container {
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  color: #eee7d2;
+  background: #202118;
+}
+
+.leaflet-popup-content-wrapper {
+  border: 1px solid #514832;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.42);
+}
+
+.leaflet-bar a,
+.leaflet-bar a:hover {
+  color: #eee7d2;
+  border-color: #514832;
+  background: #202118;
+}
+
+.leaflet-bar a:hover {
+  color: #e2c47e;
+  background: #2a291f;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid #d8b15e;
+  outline-offset: 3px;
 }

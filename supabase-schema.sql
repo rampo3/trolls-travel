@@ -46,5 +46,12 @@ create policy "Players can publish their own territories"
     end
   );
 
+drop policy if exists "Players can delete their own territories" on public.territories;
+create policy "Players can delete their own territories"
+  on public.territories for delete
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
 grant select on public.territories to anon, authenticated;
 grant insert on public.territories to authenticated;
+grant delete on public.territories to authenticated;

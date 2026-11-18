@@ -5,6 +5,7 @@ const PLAYABLE_WORLD_AREA_M2 = 5_000_000;
 const COINS_PER_PERCENT = 10;
 const MIN_CAPTURE_AREA_M2 = 1_000;
 const ROUTE_CLOSE_DISTANCE_M = 50;
+const TERRITORY_SHARING_CONSENT_VERSION = 1;
 
 const defaultState = {
   unlimitedMoney: true,
@@ -13,6 +14,7 @@ const defaultState = {
   captureCount: 0,
   capturedZones: [],
   shareTerritories: false,
+  shareTerritoriesConsentVersion: 0,
   owned: ["helmet-none", "armor-leather"],
   equipped: {
     helmet: "helmet-none",
@@ -174,29 +176,22 @@ function updateAppearanceControls() {
 
   document.getElementById("skinSelect").value = game.equipped.skin;
   document.getElementById("hairSelect").value = game.equipped.hair;
+}
 
-  document.getElementById("helmetSelect").addEventListener("change", event => {
-    game.equipped.helmet = event.target.value;
-    saveState();
-    rebuildTroll();
-  });
+function bindAppearanceControls() {
+  const controls = [
+    ["helmetSelect", "helmet"],
+    ["armorSelect", "armor"],
+    ["skinSelect", "skin"],
+    ["hairSelect", "hair"]
+  ];
 
-  document.getElementById("armorSelect").addEventListener("change", event => {
-    game.equipped.armor = event.target.value;
-    saveState();
-    rebuildTroll();
-  });
-
-  document.getElementById("skinSelect").addEventListener("change", event => {
-    game.equipped.skin = event.target.value;
-    saveState();
-    rebuildTroll();
-  });
-
-  document.getElementById("hairSelect").addEventListener("change", event => {
-    game.equipped.hair = event.target.value;
-    saveState();
-    rebuildTroll();
+  controls.forEach(([selectId, appearanceType]) => {
+    document.getElementById(selectId).addEventListener("change", event => {
+      game.equipped[appearanceType] = event.target.value;
+      saveState();
+      rebuildTroll();
+    });
   });
 }
 
@@ -584,13 +579,39 @@ function onlineIsConfigured() {
   return Boolean(config.projectUrl && config.publishableKey);
 }
 
+function confirmTerritorySharing() {
+  return window.confirm(
+    "Публикация отправит точные границы каждого нового захвата и ваш тег игрока в общий мир, где их смогут видеть все. Эти границы могут раскрыть ваши маршруты; отключение остановит только будущую публикацию и не удалит уже опубликованные территории. Продолжить?"
+  );
+}
+
 async function initializeOnline() {
   const config = window.TROLLS_TRAVEL_ONLINE_CONFIG || {};
   const shareToggle = document.getElementById("shareTerritoriesToggle");
   const refreshButton = document.getElementById("refreshOnlineButton");
+  const deleteButton = document.getElementById("deleteOnlineTerritoriesButton");
+
+  if (game.shareTerritories
+    && game.shareTerritoriesConsentVersion !== TERRITORY_SHARING_CONSENT_VERSION) {
+    if (confirmTerritorySharing()) {
+      game.shareTerritoriesConsentVersion = TERRITORY_SHARING_CONSENT_VERSION;
+    } else {
+      game.shareTerritories = false;
+    }
+    saveState();
+  }
 
   shareToggle.checked = Boolean(game.shareTerritories);
   shareToggle.addEventListener("change", event => {
+    if (event.target.checked
+      && game.shareTerritoriesConsentVersion !== TERRITORY_SHARING_CONSENT_VERSION) {
+      if (!confirmTerritorySharing()) {
+        event.target.checked = false;
+        return;
+      }
+      game.shareTerritoriesConsentVersion = TERRITORY_SHARING_CONSENT_VERSION;
+    }
+
     game.shareTerritories = event.target.checked;
     saveState();
     if (game.shareTerritories) {
@@ -600,6 +621,7 @@ async function initializeOnline() {
     }
   });
   refreshButton.addEventListener("click", () => refreshOnlineTerritories(true));
+  deleteButton.addEventListener("click", deleteOwnTerritories);
 
   if (!onlineIsConfigured()) {
     setOnlineStatus("Добавь URL и Publishable key Supabase в online-config.js.");
@@ -710,37 +732,7 @@ function isValidTerritoryPoints(points) {
       && Math.abs(point[1]) <= 180);
 }
 
-function pointInPolygon(point, polygon) {
-  const [latitude, longitude] = point;
-  let inside = false;
-
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-    const [latI, lonI] = polygon[i];
-    const [latJ, lonJ] = polygon[j];
-    const crosses = (lonI > longitude) !== (lonJ > longitude)
-      && latitude < ((latJ - latI) * (longitude - lonI)) / (lonJ - lonI) + latI;
-    if (crosses) inside = !inside;
-  }
-
-  return inside;
-}
-
-function polygonCoversPolygon(outerPoints, innerPoints) {
-  if (!isValidTerritoryPoints(outerPoints) || !isValidTerritoryPoints(innerPoints)) return false;
-
-  const inner = [...innerPoints];
-  const first = inner[0];
-  const last = inner[inner.length - 1];
-  if (first[0] === last[0] && first[1] === last[1]) inner.pop();
-
-  return inner.every((point, index) => {
-    const next = inner[(index + 1) % inner.length];
-    const midpoint = [(point[0] + next[0]) / 2, (point[1] + next[1]) / 2];
-    return pointInPolygon(point, outerPoints) && pointInPolygon(midpoint, outerPoints);
-  });
-}
-
-async function tryEatTerritory(points, area) {
+async function tryEatTerritory(points) {
   if (!onlineClient || !onlineUserId) return null;
 
   const latitudes = points.map(point => point[0]);
@@ -750,33 +742,33 @@ async function tryEatTerritory(points, area) {
   const minLon = Math.min(...longitudes);
   const maxLon = Math.max(...longitudes);
 
-  const { data: candidates, error: queryError } = await onlineClient
-    .from("territories")
-    .select("id,user_id,player_tag,area_m2,points")
-    .neq("user_id", onlineUserId)
-    // Local planar area can differ slightly from PostGIS geodesic area;
-    // the server remains the authority for the actual size check.
-    .lt("area_m2", Math.ceil(area * 1.02))
-    .gte("max_lat", minLat)
-    .lte("min_lat", maxLat)
-    .gte("max_lon", minLon)
-    .lte("min_lon", maxLon)
-    .order("area_m2", { ascending: false })
-    .limit(100);
+  const pageSize = 100;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data: candidates, error: queryError } = await onlineClient
+      .from("territories")
+      .select("id,user_id,player_tag,area_m2")
+      .neq("user_id", onlineUserId)
+      .gte("max_lat", minLat)
+      .lte("min_lat", maxLat)
+      .gte("max_lon", minLon)
+      .lte("min_lon", maxLon)
+      .order("area_m2", { ascending: true })
+      .range(offset, offset + pageSize - 1);
 
-  if (queryError) return { error: queryError };
+    if (queryError) return { error: queryError };
+    if (!candidates?.length) break;
 
-  const contained = (candidates || [])
-    .filter(zone => polygonCoversPolygon(points, zone.points));
+    for (const target of candidates) {
+      const { data, error } = await onlineClient.rpc("consume_territory", {
+        p_target_id: target.id,
+        p_attack_points: points
+      });
 
-  for (const target of contained) {
-    const { data, error } = await onlineClient.rpc("consume_territory", {
-      p_target_id: target.id,
-      p_attack_points: points
-    });
+      if (error) return { error };
+      if (data?.eaten) return data;
+    }
 
-    if (error) return { error };
-    if (data?.eaten) return data;
+    if (candidates.length < pageSize) break;
   }
 
   return null;
@@ -812,6 +804,38 @@ async function publishTerritory(points, area) {
 
   setOnlineStatus("Территория опубликована и видна другим игрокам.");
   await refreshOnlineTerritories();
+}
+
+async function deleteOwnTerritories() {
+  if (!onlineClient || !onlineUserId) {
+    setOnlineStatus("Сначала подключись к общей карте, чтобы удалить опубликованные зоны.", true);
+    return;
+  }
+
+  const confirmed = window.confirm(
+    "Удалить все территории, опубликованные этим анонимным игроком? Они исчезнут с общей карты. Локальная статистика и сохранённые территории в этом браузере останутся."
+  );
+  if (!confirmed) return;
+
+  setOnlineStatus("Удаляю опубликованные территории…");
+  const { data, error } = await onlineClient
+    .from("territories")
+    .delete()
+    .eq("user_id", onlineUserId)
+    .select("id");
+
+  if (error) {
+    console.error("Online territories could not be deleted:", error);
+    setOnlineStatus("Не удалось удалить территории. Проверь политику удаления в Supabase.", true);
+    return;
+  }
+
+  await refreshOnlineTerritories();
+  const deletedCount = data?.length || 0;
+  setOnlineStatus(deletedCount
+    ? `Удалено опубликованных территорий: ${deletedCount}.`
+    : "У этого анонимного игрока нет опубликованных территорий.");
+  if (deletedCount) showToast(`Удалено с общей карты: ${deletedCount}.`);
 }
 
 function setGpsStatus(message, kind = "") {
@@ -1259,7 +1283,7 @@ async function finishRoute() {
 
   if (game.shareTerritories && onlineClient) {
     setOnlineStatus("Проверяю, можно ли поглотить чужую территорию…");
-    const result = await tryEatTerritory(polygonPoints, area);
+    const result = await tryEatTerritory(polygonPoints);
 
     if (result?.eaten) {
       captureTerritory(polygonPoints, area, newArea, {
@@ -1530,6 +1554,7 @@ reconcileSavedTerritoryArea();
 document.getElementById("walletValue").textContent =
   game.unlimitedMoney ? "∞" : String(game.earnedCoins);
 
+bindAppearanceControls();
 updateAppearanceControls();
 renderShop();
 updateMapStats();

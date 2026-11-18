@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101a25">
+  <meta name="theme-color" content="#0d0e0b">
   <link rel="icon" type="image/png" sizes="192x192" href="troll-icon-192.png">
   <link rel="apple-touch-icon" href="troll-icon-192.png">
   <link rel="manifest" href="manifest.webmanifest">
@@ -213,11 +213,18 @@
                 <input id="shareTerritoriesToggle" type="checkbox">
                 <span>
                   <strong>Публиковать мои захваты</strong>
-                  <small>Точные границы станут видны всем игрокам.</small>
+                  <small>Точные границы и тег игрока станут видны всем. Новые публикации можно отключить, старые — удалить ниже.</small>
                 </span>
               </label>
+              <p class="muted small-note">
+                Аккаунтов и синхронизации личного прогресса между устройствами нет.
+                Каждый браузер — отдельный анонимный игрок. Публикация включается только после подтверждения.
+              </p>
               <button id="refreshOnlineButton" class="secondary-button wide-button" type="button">
                 Обновить чужие территории
+              </button>
+              <button id="deleteOnlineTerritoriesButton" class="text-button wide-button" type="button">
+                Удалить мои опубликованные территории
               </button>
             </div>
           </div>
