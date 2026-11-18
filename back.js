@@ -567,6 +567,7 @@ let landmarkMarkers = [];
 let onlineTerritoriesLayer = null;
 let onlineClient = null;
 let onlineUserId = null;
+let onlineUser = null;
 let onlineRefreshTimer = null;
 let onlineMoveTimer = null;
 
@@ -575,6 +576,145 @@ function setOnlineStatus(message, isError = false) {
   if (!status) return;
   status.textContent = message;
   status.classList.toggle("error", isError);
+}
+
+function setAuthStatus(message, isError = false) {
+  const status = document.getElementById("authStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+
+function renderAuthState(user) {
+  const fields = document.getElementById("authFields");
+  const logoutButton = document.getElementById("logoutAccountButton");
+  const registerButton = document.getElementById("registerAccountButton");
+  const loginButton = document.getElementById("loginAccountButton");
+  if (!fields || !logoutButton || !registerButton || !loginButton) return;
+
+  const isGuest = !user || user.is_anonymous;
+  fields.hidden = !isGuest;
+  logoutButton.hidden = isGuest;
+  registerButton.hidden = !isGuest;
+  loginButton.hidden = !isGuest;
+
+  if (user && !isGuest) {
+    setAuthStatus(`Вошёл как ${user.email || "игрок"}.`);
+  } else if (user) {
+    setAuthStatus("Ты играешь как гость. Создай аккаунт, чтобы сохранить этого игрока и его территории.");
+  }
+}
+
+function setAuthBusy(isBusy) {
+  [
+    "registerAccountButton",
+    "loginAccountButton",
+    "logoutAccountButton"
+  ].forEach(id => {
+    const button = document.getElementById(id);
+    if (button) button.disabled = isBusy;
+  });
+}
+
+function authErrorMessage(error) {
+  if (error?.message) return error.message;
+  return "Не удалось выполнить действие с аккаунтом. Попробуй ещё раз.";
+}
+
+async function updateOnlineIdentity(user) {
+  onlineUser = user || null;
+  onlineUserId = onlineUser?.id || null;
+  renderAuthState(onlineUser);
+  redrawCapturedTerritories(false);
+  await refreshOnlineTerritories();
+}
+
+async function createPlayerAccount() {
+  if (!onlineClient || !onlineUser?.is_anonymous) {
+    setAuthStatus("Создать аккаунт можно из гостевой сессии.", true);
+    return;
+  }
+
+  const emailInput = document.getElementById("authEmail");
+  const passwordInput = document.getElementById("authPassword");
+  if (!emailInput.reportValidity() || !passwordInput.reportValidity()) return;
+
+  setAuthBusy(true);
+  try {
+    const { data, error } = await onlineClient.auth.updateUser(
+      {
+        email: emailInput.value.trim(),
+        password: passwordInput.value
+      },
+      { emailRedirectTo: window.location.href }
+    );
+    if (error) throw error;
+
+    await updateOnlineIdentity(data.user);
+    passwordInput.value = "";
+    setAuthStatus(
+      data.user.email_confirmed_at
+        ? `Аккаунт ${data.user.email} готов. Текущий игрок и его территории сохранены.`
+        : `Проверь почту ${emailInput.value.trim()}, чтобы подтвердить адрес. Игрок и его ID сохранены.`
+    );
+  } catch (error) {
+    console.error("Player account registration failed:", error);
+    setAuthStatus(authErrorMessage(error), true);
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+async function loginPlayerAccount() {
+  if (!onlineClient) return;
+
+  const emailInput = document.getElementById("authEmail");
+  const passwordInput = document.getElementById("authPassword");
+  if (!emailInput.reportValidity() || !passwordInput.reportValidity()) return;
+
+  if (onlineUser?.is_anonymous && !window.confirm(
+    "Вход переключит игру на выбранный аккаунт. Опубликованные территории текущего гостя останутся привязаны к гостю. Чтобы сохранить этого игрока, выбери «Создать аккаунт и сохранить игрока»."
+  )) {
+    return;
+  }
+
+  setAuthBusy(true);
+  try {
+    const { data, error } = await onlineClient.auth.signInWithPassword({
+      email: emailInput.value.trim(),
+      password: passwordInput.value
+    });
+    if (error) throw error;
+
+    await updateOnlineIdentity(data.user);
+    passwordInput.value = "";
+    setAuthStatus(`Вошёл как ${data.user.email}.`);
+  } catch (error) {
+    console.error("Player account sign-in failed:", error);
+    setAuthStatus(authErrorMessage(error), true);
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+async function logoutPlayerAccount() {
+  if (!onlineClient) return;
+
+  setAuthBusy(true);
+  try {
+    const { error: signOutError } = await onlineClient.auth.signOut();
+    if (signOutError) throw signOutError;
+
+    const { data, error } = await onlineClient.auth.signInAnonymously();
+    if (error) throw error;
+    await updateOnlineIdentity(data.user);
+    setAuthStatus("Вышел из аккаунта. Игра продолжится как гость.");
+  } catch (error) {
+    console.error("Player account sign-out failed:", error);
+    setAuthStatus(authErrorMessage(error), true);
+  } finally {
+    setAuthBusy(false);
+  }
 }
 
 function onlineIsConfigured() {
@@ -593,6 +733,14 @@ async function initializeOnline() {
   const shareToggle = document.getElementById("shareTerritoriesToggle");
   const refreshButton = document.getElementById("refreshOnlineButton");
   const deleteButton = document.getElementById("deleteOnlineTerritoriesButton");
+  const registerButton = document.getElementById("registerAccountButton");
+  const loginButton = document.getElementById("loginAccountButton");
+  const logoutButton = document.getElementById("logoutAccountButton");
+
+  registerButton.addEventListener("click", createPlayerAccount);
+  loginButton.addEventListener("click", loginPlayerAccount);
+  logoutButton.addEventListener("click", logoutPlayerAccount);
+  renderAuthState(null);
 
   if (game.shareTerritories
     && game.shareTerritoriesConsentVersion !== TERRITORY_SHARING_CONSENT_VERSION) {
@@ -628,11 +776,15 @@ async function initializeOnline() {
 
   if (!onlineIsConfigured()) {
     setOnlineStatus("Добавь URL и Publishable key Supabase в online-config.js.");
+    setAuthStatus("Сначала настрой подключение к Supabase.", true);
+    setAuthBusy(true);
     return;
   }
 
   if (!window.supabase?.createClient) {
     setOnlineStatus("Не загрузилась библиотека Supabase. Проверь подключение к интернету.", true);
+    setAuthStatus("Не удалось загрузить Supabase Auth.", true);
+    setAuthBusy(true);
     return;
   }
 
@@ -650,6 +802,21 @@ async function initializeOnline() {
 
     onlineUserId = session?.user?.id || null;
     if (!onlineUserId) throw new Error("Не удалось создать игровую сессию.");
+    onlineUser = session.user;
+    renderAuthState(onlineUser);
+    onlineClient.auth.onAuthStateChange((event, nextSession) => {
+      const previousUserId = onlineUserId;
+      onlineUser = nextSession?.user || null;
+      onlineUserId = onlineUser?.id || null;
+      renderAuthState(onlineUser);
+
+      if (previousUserId !== onlineUserId || event === "USER_UPDATED") {
+        setTimeout(() => {
+          redrawCapturedTerritories(false);
+          refreshOnlineTerritories();
+        }, 0);
+      }
+    });
 
     redrawCapturedTerritories(false);
     setOnlineStatus("Подключено. Чужие территории отображаются на карте.");
