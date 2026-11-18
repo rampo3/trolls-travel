@@ -682,6 +682,53 @@ main {
   color: var(--danger);
 }
 
+.auth-panel {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid rgba(216, 177, 94, 0.2);
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+#authFields {
+  display: grid;
+  gap: 8px;
+}
+
+#authFields[hidden] {
+  display: none;
+}
+
+.auth-panel .field-label {
+  margin: 3px 0 0;
+}
+
+.auth-input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: #12130f;
+}
+
+.auth-input:focus-visible {
+  border-color: var(--gold);
+  outline: 2px solid rgba(216, 177, 94, 0.2);
+}
+
+.auth-panel .primary-button,
+.auth-panel .secondary-button {
+  min-height: 42px;
+  font-size: 11px;
+}
+
+.auth-panel .secondary-button[hidden] {
+  display: none;
+}
+
 .online-consent {
   display: flex;
   align-items: flex-start;
