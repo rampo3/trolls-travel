@@ -675,7 +675,7 @@ async function refreshOnlineTerritories(showFeedback = false) {
   const bounds = map.getBounds();
   const { data, error } = await onlineClient
     .from("territories")
-    .select("id,user_id,player_tag,area_m2,points,created_at,max_lat,min_lat,max_lon,min_lon")
+    .select("id,user_id,player_tag,area_m2,points,geometry_json,created_at,max_lat,min_lat,max_lon,min_lon")
     .gte("max_lat", bounds.getSouth())
     .lte("min_lat", bounds.getNorth())
     .gte("max_lon", bounds.getWest())
@@ -694,21 +694,23 @@ async function refreshOnlineTerritories(showFeedback = false) {
 
   (data || []).forEach(zone => {
     if (zone.user_id === onlineUserId) return;
-    if (!Array.isArray(zone.points) || zone.points.length < 3 || zone.points.length > 2000) return;
-    if (!zone.points.every(point => Array.isArray(point)
-      && point.length === 2
-      && Number.isFinite(point[0])
-      && Number.isFinite(point[1])
-      && Math.abs(point[0]) <= 90
-      && Math.abs(point[1]) <= 180)) return;
-
-    const polygon = L.polygon(zone.points, {
+    let polygon;
+    const style = {
       color: "#8b78ff",
       weight: 2,
       opacity: 0.95,
       fillColor: "#8872ff",
       fillOpacity: 0.24
-    });
+    };
+
+    if (zone.geometry_json) {
+      if (!isValidTerritoryGeometry(zone.geometry_json)) return;
+      polygon = L.geoJSON(zone.geometry_json, { style });
+    } else {
+      if (!isValidTerritoryPoints(zone.points)) return;
+      polygon = L.polygon(zone.points, style);
+    }
+
     const player = escapeHtml(zone.player_tag || "Путник");
     const area = formatArea(Number(zone.area_m2) || 0);
     const created = new Date(zone.created_at).toLocaleDateString("ru-RU");
@@ -733,6 +735,27 @@ function isValidTerritoryPoints(points) {
       && Number.isFinite(point[1])
       && Math.abs(point[0]) <= 90
       && Math.abs(point[1]) <= 180);
+}
+
+function isValidTerritoryGeometry(geometry) {
+  if (!geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) return false;
+
+  const polygons = geometry.type === "Polygon"
+    ? [geometry.coordinates]
+    : geometry.coordinates;
+
+  return Array.isArray(polygons)
+    && polygons.length > 0
+    && polygons.every(rings => Array.isArray(rings)
+      && rings.length > 0
+      && rings.every(ring => Array.isArray(ring)
+        && ring.length >= 4
+        && ring.every(point => Array.isArray(point)
+          && point.length >= 2
+          && Number.isFinite(point[0])
+          && Number.isFinite(point[1])
+          && Math.abs(point[0]) <= 180
+          && Math.abs(point[1]) <= 90)));
 }
 
 async function tryEatTerritory(points) {
@@ -1415,7 +1438,8 @@ async function finishRoute() {
     if (result?.eaten) {
       captureTerritory(polygonPoints, area, newArea, {
         publish: false,
-        eatenPlayer: result.target_player_tag
+        eatenPlayer: result.target_player_tag,
+        eatenAreaM2: Number(result.eaten_area_m2) || 0
       });
       await refreshOnlineTerritories();
       return;
@@ -1472,8 +1496,14 @@ function captureTerritory(points, area, newArea, options = {}) {
   updateMapStats();
 
   if (options.eatenPlayer) {
-    setGpsStatus(`Ты поглотил территорию игрока ${options.eatenPlayer}!`, "ok");
-    showToast(`Территория ${options.eatenPlayer} поглощена!`);
+    const eatenArea = formatArea(options.eatenAreaM2 || 0);
+    setGpsStatus(
+      `Забрано ${eatenArea} территории игрока ${options.eatenPlayer}; его остаток сохранён.`,
+      "ok"
+    );
+    showToast(
+      `Забрано ${eatenArea} у игрока ${options.eatenPlayer}. Остальная территория сохранена.`
+    );
   } else {
     setGpsStatus(
       `Новая территория: ${formatArea(newArea)}. Получено ${reward} монет.`,
