@@ -5,8 +5,7 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0c1420",
-  "theme_color": "#101a25",
+
   "icons": [
     {
       "src": "troll-icon-192.png",

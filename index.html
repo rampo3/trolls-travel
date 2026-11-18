@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101a25">
+  <meta name="theme-color" content="#0d0e0b">
   <link rel="icon" type="image/png" sizes="192x192" href="troll-icon-192.png">
   <link rel="apple-touch-icon" href="troll-icon-192.png">
   <link rel="manifest" href="manifest.webmanifest">
@@ -186,7 +186,7 @@
             </div>
             <div class="progress-label">
               <span id="progressText">0% игровой зоны</span>
-              <span>Минимум 1 000 м²</span>
+              <span>Минимум 1 000 м² новой территории</span>
             </div>
 
             <button id="startRouteButton" class="primary-button wide-button">
@@ -213,11 +213,18 @@
                 <input id="shareTerritoriesToggle" type="checkbox">
                 <span>
                   <strong>Публиковать мои захваты</strong>
-                  <small>Точные границы станут видны всем игрокам.</small>
+                  <small>Точные границы и тег игрока станут видны всем. Новые публикации можно отключить, старые — удалить ниже.</small>
                 </span>
               </label>
+              <p class="muted small-note">
+                Аккаунтов и синхронизации личного прогресса между устройствами нет.
+                Каждый браузер — отдельный анонимный игрок. Публикация включается только после подтверждения.
+              </p>
               <button id="refreshOnlineButton" class="secondary-button wide-button" type="button">
                 Обновить чужие территории
+              </button>
+              <button id="deleteOnlineTerritoriesButton" class="text-button wide-button" type="button">
+                Удалить мои опубликованные территории
               </button>
             </div>
           </div>
@@ -269,7 +276,6 @@
 
           <label class="field-label" for="armorSelect">Броня</label>
           <select id="armorSelect" class="select-control"></select>
-
           <label class="field-label" for="skinSelect">Цвет кожи</label>
           <select id="skinSelect" class="select-control">
             <option value="moss">Мшисто-зелёный</option>
@@ -321,6 +327,7 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/dist/polygon-clipping.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="online-config.js"></script>
   <script src="back.js"></script>
