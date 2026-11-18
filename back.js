@@ -12,6 +12,7 @@ const defaultState = {
   capturedArea: 0,
   captureCount: 0,
   capturedZones: [],
+  shareTerritories: false,
   owned: ["helmet-none", "armor-leather"],
   equipped: {
     helmet: "helmet-none",
@@ -561,8 +562,257 @@ let watchId = null;
 let tracking = false;
 let routePoints = [];
 let routeDistance = 0;
+let lastRoutePointAt = 0;
+let lastRouteAccuracy = 0;
 let capturedPolygons = [];
 let landmarkMarkers = [];
+let onlineTerritoriesLayer = null;
+let onlineClient = null;
+let onlineUserId = null;
+let onlineRefreshTimer = null;
+let onlineMoveTimer = null;
+
+function setOnlineStatus(message, isError = false) {
+  const status = document.getElementById("onlineStatus");
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("error", isError);
+}
+
+function onlineIsConfigured() {
+  const config = window.TROLLS_TRAVEL_ONLINE_CONFIG || {};
+  return Boolean(config.projectUrl && config.publishableKey);
+}
+
+async function initializeOnline() {
+  const config = window.TROLLS_TRAVEL_ONLINE_CONFIG || {};
+  const shareToggle = document.getElementById("shareTerritoriesToggle");
+  const refreshButton = document.getElementById("refreshOnlineButton");
+
+  shareToggle.checked = Boolean(game.shareTerritories);
+  shareToggle.addEventListener("change", event => {
+    game.shareTerritories = event.target.checked;
+    saveState();
+    if (game.shareTerritories) {
+      setOnlineStatus("Публикация включена. Новые захваты будут видны всем игрокам.");
+    } else {
+      setOnlineStatus("Публикация выключена. Твои новые захваты останутся на этом устройстве.");
+    }
+  });
+  refreshButton.addEventListener("click", () => refreshOnlineTerritories(true));
+
+  if (!onlineIsConfigured()) {
+    setOnlineStatus("Добавь URL и Publishable key Supabase в online-config.js.");
+    return;
+  }
+
+  if (!window.supabase?.createClient) {
+    setOnlineStatus("Не загрузилась библиотека Supabase. Проверь подключение к интернету.", true);
+    return;
+  }
+
+  try {
+    onlineClient = window.supabase.createClient(config.projectUrl, config.publishableKey);
+    const { data, error } = await onlineClient.auth.getSession();
+    if (error) throw error;
+
+    let session = data.session;
+    if (!session) {
+      const result = await onlineClient.auth.signInAnonymously();
+      if (result.error) throw result.error;
+      session = result.data.session;
+    }
+
+    onlineUserId = session?.user?.id || null;
+    if (!onlineUserId) throw new Error("Не удалось создать игровую сессию.");
+
+    setOnlineStatus("Подключено. Чужие территории отображаются на карте.");
+    await refreshOnlineTerritories();
+
+    clearInterval(onlineRefreshTimer);
+    onlineRefreshTimer = setInterval(() => {
+      if (document.getElementById("mapScreen")?.classList.contains("active")) {
+        refreshOnlineTerritories();
+      }
+    }, 45_000);
+  } catch (error) {
+    console.error("Online mode initialization failed:", error);
+    setOnlineStatus("Не удалось подключиться. Проверь настройки Supabase.", true);
+  }
+}
+
+async function refreshOnlineTerritories(showFeedback = false) {
+  if (!onlineClient || !map || !onlineTerritoriesLayer) {
+    if (showFeedback) setOnlineStatus("Сначала подключи Supabase в online-config.js.", true);
+    return;
+  }
+
+  const bounds = map.getBounds();
+  const { data, error } = await onlineClient
+    .from("territories")
+    .select("id,user_id,player_tag,area_m2,points,created_at,max_lat,min_lat,max_lon,min_lon")
+    .gte("max_lat", bounds.getSouth())
+    .lte("min_lat", bounds.getNorth())
+    .gte("max_lon", bounds.getWest())
+    .lte("min_lon", bounds.getEast())
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) {
+    console.error("Online territories could not be loaded:", error);
+    setOnlineStatus("Не удалось загрузить территории. Проверь таблицу и доступ Supabase.", true);
+    return;
+  }
+
+  onlineTerritoriesLayer.clearLayers();
+  let visibleCount = 0;
+
+  (data || []).forEach(zone => {
+    if (zone.user_id === onlineUserId) return;
+    if (!Array.isArray(zone.points) || zone.points.length < 3 || zone.points.length > 2000) return;
+    if (!zone.points.every(point => Array.isArray(point)
+      && point.length === 2
+      && Number.isFinite(point[0])
+      && Number.isFinite(point[1])
+      && Math.abs(point[0]) <= 90
+      && Math.abs(point[1]) <= 180)) return;
+
+    const polygon = L.polygon(zone.points, {
+      color: "#8b78ff",
+      weight: 2,
+      opacity: 0.95,
+      fillColor: "#8872ff",
+      fillOpacity: 0.24
+    });
+    const player = escapeHtml(zone.player_tag || "Путник");
+    const area = formatArea(Number(zone.area_m2) || 0);
+    const created = new Date(zone.created_at).toLocaleDateString("ru-RU");
+    polygon.bindPopup(`<b>${player}</b><br>${area}<br><small>${created}</small>`);
+    onlineTerritoriesLayer.addLayer(polygon);
+    visibleCount += 1;
+  });
+
+  setOnlineStatus(visibleCount
+    ? `На этой области карты чужих территорий: ${visibleCount}.`
+    : "В этой области карты чужих территорий пока нет.");
+  if (showFeedback) showToast("Общая карта обновлена.");
+}
+
+function isValidTerritoryPoints(points) {
+  return Array.isArray(points)
+    && points.length >= 3
+    && points.length <= 2000
+    && points.every(point => Array.isArray(point)
+      && point.length === 2
+      && Number.isFinite(point[0])
+      && Number.isFinite(point[1])
+      && Math.abs(point[0]) <= 90
+      && Math.abs(point[1]) <= 180);
+}
+
+function pointInPolygon(point, polygon) {
+  const [latitude, longitude] = point;
+  let inside = false;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const [latI, lonI] = polygon[i];
+    const [latJ, lonJ] = polygon[j];
+    const crosses = (lonI > longitude) !== (lonJ > longitude)
+      && latitude < ((latJ - latI) * (longitude - lonI)) / (lonJ - lonI) + latI;
+    if (crosses) inside = !inside;
+  }
+
+  return inside;
+}
+
+function polygonCoversPolygon(outerPoints, innerPoints) {
+  if (!isValidTerritoryPoints(outerPoints) || !isValidTerritoryPoints(innerPoints)) return false;
+
+  const inner = [...innerPoints];
+  const first = inner[0];
+  const last = inner[inner.length - 1];
+  if (first[0] === last[0] && first[1] === last[1]) inner.pop();
+
+  return inner.every((point, index) => {
+    const next = inner[(index + 1) % inner.length];
+    const midpoint = [(point[0] + next[0]) / 2, (point[1] + next[1]) / 2];
+    return pointInPolygon(point, outerPoints) && pointInPolygon(midpoint, outerPoints);
+  });
+}
+
+async function tryEatTerritory(points, area) {
+  if (!onlineClient || !onlineUserId) return null;
+
+  const latitudes = points.map(point => point[0]);
+  const longitudes = points.map(point => point[1]);
+  const minLat = Math.min(...latitudes);
+  const maxLat = Math.max(...latitudes);
+  const minLon = Math.min(...longitudes);
+  const maxLon = Math.max(...longitudes);
+
+  const { data: candidates, error: queryError } = await onlineClient
+    .from("territories")
+    .select("id,user_id,player_tag,area_m2,points")
+    .neq("user_id", onlineUserId)
+    // Local planar area can differ slightly from PostGIS geodesic area;
+    // the server remains the authority for the actual size check.
+    .lt("area_m2", Math.ceil(area * 1.02))
+    .gte("max_lat", minLat)
+    .lte("min_lat", maxLat)
+    .gte("max_lon", minLon)
+    .lte("min_lon", maxLon)
+    .order("area_m2", { ascending: false })
+    .limit(100);
+
+  if (queryError) return { error: queryError };
+
+  const contained = (candidates || [])
+    .filter(zone => polygonCoversPolygon(points, zone.points));
+
+  for (const target of contained) {
+    const { data, error } = await onlineClient.rpc("consume_territory", {
+      p_target_id: target.id,
+      p_attack_points: points
+    });
+
+    if (error) return { error };
+    if (data?.eaten) return data;
+  }
+
+  return null;
+}
+
+async function publishTerritory(points, area) {
+  if (!onlineClient || !onlineUserId) {
+    setOnlineStatus("Общая карта не подключена: захват сохранён только на этом устройстве.", true);
+    return;
+  }
+
+  const latitudes = points.map(point => point[0]);
+  const longitudes = points.map(point => point[1]);
+  const userTag = `Путник-${onlineUserId.slice(0, 5).toUpperCase()}`;
+  setOnlineStatus("Публикую границы территории на общей карте…");
+
+  const { error } = await onlineClient.from("territories").insert({
+    user_id: onlineUserId,
+    player_tag: userTag,
+    area_m2: Math.round(area),
+    points,
+    min_lat: Math.min(...latitudes),
+    max_lat: Math.max(...latitudes),
+    min_lon: Math.min(...longitudes),
+    max_lon: Math.max(...longitudes)
+  });
+
+  if (error) {
+    console.error("Online territory could not be published:", error);
+    setOnlineStatus("Захват сохранён локально, но не опубликован. Проверь доступ Supabase.", true);
+    return;
+  }
+
+  setOnlineStatus("Территория опубликована и видна другим игрокам.");
+  await refreshOnlineTerritories();
+}
 
 function setGpsStatus(message, kind = "") {
   document.getElementById("gpsStatus").textContent = message;
@@ -576,13 +826,16 @@ function initializeMap() {
 
   map = L.map("mapCanvas", {
     zoomControl: false,
+    attributionControl: false,
     preferCanvas: true
   }).setView([56.9972, 40.9714], 15);
+  onlineTerritoriesLayer = L.layerGroup().addTo(map);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
   }).addTo(map);
+  L.control.attribution({ prefix: false, position: "bottomleft" }).addTo(map);
 
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
@@ -605,9 +858,14 @@ function initializeMap() {
   document.getElementById("finishRouteButton").addEventListener("click", finishRoute);
   document.getElementById("cancelRouteButton").addEventListener("click", cancelRoute);
   document.getElementById("landmarksButton").addEventListener("click", findLandmarks);
+  map.on("moveend", () => {
+    clearTimeout(onlineMoveTimer);
+    onlineMoveTimer = setTimeout(() => refreshOnlineTerritories(), 250);
+  });
 
   map.whenReady(() => setTimeout(() => map.invalidateSize(), 80));
   updateMapStats();
+  initializeOnline();
 }
 
 function distanceMeters(a, b) {
@@ -642,6 +900,162 @@ function polygonAreaMeters(points) {
   }
 
   return Math.abs(twiceArea) / 2;
+}
+
+function isValidAreaPoints(points) {
+  return Array.isArray(points)
+    && points.length >= 3
+    && points.every(point => Array.isArray(point)
+      && point.length === 2
+      && Number.isFinite(point[0])
+      && Number.isFinite(point[1])
+      && Math.abs(point[0]) <= 90
+      && Math.abs(point[1]) <= 180);
+}
+
+function territoryBounds(points) {
+  return points.reduce((bounds, point) => ({
+    minLat: Math.min(bounds.minLat, point[0]),
+    maxLat: Math.max(bounds.maxLat, point[0]),
+    minLon: Math.min(bounds.minLon, point[1]),
+    maxLon: Math.max(bounds.maxLon, point[1])
+  }), {
+    minLat: Infinity,
+    maxLat: -Infinity,
+    minLon: Infinity,
+    maxLon: -Infinity
+  });
+}
+
+function boundsOverlap(a, b) {
+  return a.minLat <= b.maxLat
+    && a.maxLat >= b.minLat
+    && a.minLon <= b.maxLon
+    && a.maxLon >= b.minLon;
+}
+
+function toClippingPolygon(points, originLat, originLon) {
+  const radius = 6378137;
+  const latitudeScale = Math.cos(originLat * Math.PI / 180);
+  const ring = [];
+
+  points.forEach(point => {
+    const coordinate = [
+      radius * (point[1] - originLon) * Math.PI / 180 * latitudeScale,
+      radius * (point[0] - originLat) * Math.PI / 180
+    ];
+    const previous = ring[ring.length - 1];
+    if (!previous || previous[0] !== coordinate[0] || previous[1] !== coordinate[1]) {
+      ring.push(coordinate);
+    }
+  });
+
+  if (ring.length > 1
+    && ring[0][0] === ring[ring.length - 1][0]
+    && ring[0][1] === ring[ring.length - 1][1]) {
+    ring.pop();
+  }
+  if (ring.length < 3) throw new Error("У контура недостаточно уникальных точек.");
+
+  ring.push([...ring[0]]);
+  return [ring];
+}
+
+function clippedGeometryArea(geometry) {
+  if (!Array.isArray(geometry)) throw new Error("Не удалось обработать геометрию территории.");
+
+  return geometry.reduce((total, polygon) => {
+    if (!Array.isArray(polygon) || polygon.length === 0) {
+      throw new Error("Получен некорректный многоугольник территории.");
+    }
+
+    const polygonArea = polygon.reduce((area, ring, index) => {
+      let twiceArea = 0;
+      for (let pointIndex = 0; pointIndex < ring.length; pointIndex += 1) {
+        const current = ring[pointIndex];
+        const next = ring[(pointIndex + 1) % ring.length];
+        twiceArea += current[0] * next[1] - next[0] * current[1];
+      }
+
+      const ringArea = Math.abs(twiceArea) / 2;
+      return area + (index === 0 ? ringArea : -ringArea);
+    }, 0);
+
+    return total + Math.max(0, polygonArea);
+  }, 0);
+}
+
+function calculateNewTerritoryArea(points, existingZones) {
+  const clipping = window.polygonClipping;
+  if (!clipping) throw new Error("Не загрузилась библиотека расчёта площадей.");
+  if (!isValidAreaPoints(points)) throw new Error("Маршрут содержит некорректные координаты.");
+
+  const bounds = territoryBounds(points);
+  const overlappingZones = existingZones
+    .map(zone => {
+      if (!zone || !isValidAreaPoints(zone.points)) {
+        throw new Error("В сохранённых территориях обнаружены некорректные координаты.");
+      }
+      return { zone, bounds: territoryBounds(zone.points) };
+    })
+    .filter(item => boundsOverlap(bounds, item.bounds));
+
+  const originLat = points.reduce((sum, point) => sum + point[0], 0) / points.length;
+  const originLon = points.reduce((sum, point) => sum + point[1], 0) / points.length;
+  const newPolygon = toClippingPolygon(points, originLat, originLon);
+  const normalizedNewPolygon = clipping.union(newPolygon);
+
+  if (overlappingZones.length === 0) return clippedGeometryArea(normalizedNewPolygon);
+
+  const previousPolygons = overlappingZones.map(({ zone }) =>
+    toClippingPolygon(zone.points, originLat, originLon)
+  );
+  const previousUnion = clipping.union(...previousPolygons);
+  const uncoveredArea = clipping.difference(normalizedNewPolygon, previousUnion);
+  const area = clippedGeometryArea(uncoveredArea);
+
+  if (!Number.isFinite(area)) throw new Error("Не удалось определить площадь нового участка.");
+  return area;
+}
+
+function reconcileSavedTerritoryArea() {
+  if (game.capturedZones.length === 0) return;
+
+  try {
+    let uniqueArea = 0;
+    let uniqueCaptureCount = 0;
+    game.capturedZones.forEach((zone, index) => {
+      const newArea = calculateNewTerritoryArea(
+        zone.points,
+        game.capturedZones.slice(0, index)
+      );
+      uniqueArea += newArea;
+      if (newArea > 0.5) uniqueCaptureCount += 1;
+    });
+
+    const oldArea = game.capturedArea;
+    const oldCoins = game.earnedCoins;
+    const oldCaptureCount = game.captureCount;
+    game.capturedArea = uniqueArea;
+    game.captureCount = uniqueCaptureCount;
+    game.earnedCoins = Math.floor(
+      Math.min(100, (uniqueArea / PLAYABLE_WORLD_AREA_M2) * 100) * COINS_PER_PERCENT
+    );
+
+    if (Math.abs(oldArea - uniqueArea) > 0.5
+      || oldCoins !== game.earnedCoins
+      || oldCaptureCount !== uniqueCaptureCount) {
+      saveState();
+      if (oldArea - uniqueArea > 0.5
+        || oldCoins !== game.earnedCoins
+        || oldCaptureCount !== uniqueCaptureCount) {
+        showToast("Площадь и награды пересчитаны без повторного учёта захватов.");
+      }
+    }
+  } catch (error) {
+    console.error("Saved territory area could not be reconciled:", error);
+    showToast("Не удалось пересчитать сохранённые территории. Проверь подключение и сохранения.", true);
+  }
 }
 
 function formatArea(area) {
@@ -723,6 +1137,8 @@ function startRoute() {
 
   routePoints = [];
   routeDistance = 0;
+  lastRoutePointAt = 0;
+  lastRouteAccuracy = 0;
   tracking = true;
   routeLine.setLatLngs([]);
   setRouteButtons();
@@ -731,12 +1147,13 @@ function startRoute() {
   watchId = navigator.geolocation.watchPosition(
     onPositionUpdate,
     handleGeoError,
-    { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 }
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
   );
 }
 
 function onPositionUpdate(position) {
   const point = [position.coords.latitude, position.coords.longitude];
+  const accuracy = Number(position.coords.accuracy);
 
   if (!userMarker) {
     userMarker = L.circleMarker(point, {
@@ -750,17 +1167,32 @@ function onPositionUpdate(position) {
     userMarker.setLatLng(point);
   }
 
+  if (!Number.isFinite(accuracy) || accuracy > 40) {
+    if (tracking) setGpsStatus("Сигнал GPS неточный. Подожди точность не хуже 40 м.");
+    updateMapStats();
+    return;
+  }
+
+  const receivedAt = Number(position.timestamp) || Date.now();
   if (routePoints.length === 0) {
     routePoints.push(point);
+    lastRoutePointAt = receivedAt;
+    lastRouteAccuracy = accuracy;
     map.setView(point, Math.max(map.getZoom(), 16));
   } else {
     const lastPoint = routePoints[routePoints.length - 1];
     const stepDistance = distanceMeters(lastPoint, point);
+    const elapsedSeconds = Math.max(1, (receivedAt - lastRoutePointAt) / 1000);
+    const plausibleStep = Math.max(45, elapsedSeconds * 12 + accuracy + lastRouteAccuracy);
 
-    // Отсекаем колебания GPS на месте.
-    if (stepDistance >= 5) {
+    // Игнорируем GPS-скачки и не добавляем точки, объяснимые обычным шумом.
+    if (stepDistance > plausibleStep) {
+      setGpsStatus("GPS дал скачок координат — пропустил точку, продолжаю запись.");
+    } else if (stepDistance >= Math.max(3, Math.min(8, accuracy * 0.12))) {
       routeDistance += stepDistance;
       routePoints.push(point);
+      lastRoutePointAt = receivedAt;
+      lastRouteAccuracy = accuracy;
     }
   }
 
@@ -775,7 +1207,7 @@ function stopGpsWatch() {
   }
 }
 
-function finishRoute() {
+async function finishRoute() {
   if (!tracking) return;
 
   tracking = false;
@@ -809,7 +1241,42 @@ function finishRoute() {
     return;
   }
 
-  captureTerritory(polygonPoints, area);
+  let newArea;
+  try {
+    newArea = calculateNewTerritoryArea(polygonPoints, game.capturedZones);
+  } catch (error) {
+    console.error("New territory area could not be calculated:", error);
+    setGpsStatus("Не удалось рассчитать новую площадь. Захват не выполнен.", "error");
+    showToast("Не удалось проверить пересечения территорий. Захват не сохранён.", true);
+    return;
+  }
+
+  if (newArea < MIN_CAPTURE_AREA_M2) {
+    setGpsStatus("Вся территория уже захвачена или новой площади меньше минимума.", "error");
+    showToast(`Нужно не меньше ${MIN_CAPTURE_AREA_M2} м² новой территории.`, true);
+    return;
+  }
+
+  if (game.shareTerritories && onlineClient) {
+    setOnlineStatus("Проверяю, можно ли поглотить чужую территорию…");
+    const result = await tryEatTerritory(polygonPoints, area);
+
+    if (result?.eaten) {
+      captureTerritory(polygonPoints, area, newArea, {
+        publish: false,
+        eatenPlayer: result.target_player_tag
+      });
+      await refreshOnlineTerritories();
+      return;
+    }
+
+    if (result?.error) {
+      console.error("Territory eating failed:", result.error);
+      showToast("Не получилось поглотить чужую зону. Захват будет обычным.", true);
+    }
+  }
+
+  captureTerritory(polygonPoints, area, newArea);
 }
 
 function cancelRoute() {
@@ -823,13 +1290,13 @@ function cancelRoute() {
   updateMapStats();
 }
 
-function captureTerritory(points, area) {
+function captureTerritory(points, area, newArea, options = {}) {
   const previousPercent = Math.min(
     100,
     (game.capturedArea / PLAYABLE_WORLD_AREA_M2) * 100
   );
 
-  game.capturedArea += area;
+  game.capturedArea += newArea;
   game.captureCount += 1;
 
   const currentPercent = Math.min(
@@ -852,11 +1319,18 @@ function captureTerritory(points, area) {
   saveState();
   updateMapStats();
 
-  setGpsStatus(
-    `Территория захвачена: ${formatArea(area)}. Получено ${reward} монет.`,
-    "ok"
-  );
-  showToast(`Территория захвачена! ${formatArea(area)} · +${reward} монет.`);
+  if (options.eatenPlayer) {
+    setGpsStatus(`Ты поглотил территорию игрока ${options.eatenPlayer}!`, "ok");
+    showToast(`Территория ${options.eatenPlayer} поглощена!`);
+  } else {
+    setGpsStatus(
+      `Новая территория: ${formatArea(newArea)}. Получено ${reward} монет.`,
+      "ok"
+    );
+    showToast(`Захвачено новой территории: ${formatArea(newArea)} · +${reward} монет.`);
+  }
+
+  if (game.shareTerritories && options.publish !== false) publishTerritory(points, area);
 }
 
 function addCapturedPolygon(points, fitBounds) {
@@ -919,7 +1393,7 @@ async function findLandmarks() {
   const east = bounds.getEast();
 
   const query = `
-    [out:json][timeout:20];
+    [out:json][timeout:10];
     (
       nwr["historic"~"monument|memorial"](${south},${west},${north},${east});
       nwr["amenity"~"place_of_worship|theatre|cinema|university|arts_centre"](${south},${west},${north},${east});
@@ -932,12 +1406,42 @@ async function findLandmarks() {
   list.innerHTML = '<p class="muted">Ищу места в OpenStreetMap…</p>';
 
   try {
-    const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-    const response = await fetch(url);
+    const endpoints = [
+      "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.private.coffee/api/interpreter"
+    ];
+    let data = null;
+    let lastError = null;
 
-    if (!response.ok) throw new Error("Overpass API error");
+    for (let index = 0; index < endpoints.length; index += 1) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 13000);
+      try {
+        if (index > 0) {
+          list.innerHTML = '<p class="muted">Первый сервер не ответил, пробую запасной…</p>';
+        }
 
-    const data = await response.json();
+        const response = await fetch(endpoints[index], {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+          body: new URLSearchParams({ data: query }),
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`Overpass API: HTTP ${response.status}`);
+
+        const result = await response.json();
+        if (result.remark) throw new Error(result.remark);
+        data = result;
+        break;
+      } catch (error) {
+        lastError = error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    if (!data) throw lastError || new Error("Overpass API is unavailable");
     const elements = data.elements || [];
 
     landmarkMarkers.forEach(marker => map.removeLayer(marker));
@@ -1001,9 +1505,10 @@ async function findLandmarks() {
     if (!list.children.length) {
       list.innerHTML = '<p class="muted">В этой области важные места не найдены.</p>';
     }
-  } catch {
+  } catch (error) {
+    console.warn("Landmark search failed:", error);
     list.innerHTML =
-      '<p class="muted">Не удалось загрузить список. Проверь подключение и попробуй ещё раз.</p>';
+      '<p class="muted">Сервис карты не ответил. Проверь интернет, приблизь карту к району и попробуй ещё раз.</p>';
     showToast("Сервис достопримечательностей временно недоступен.", true);
   }
 }
@@ -1019,6 +1524,8 @@ function escapeHtml(value) {
 }
 
 /* Начальная настройка */
+
+reconcileSavedTerritoryArea();
 
 document.getElementById("walletValue").textContent =
   game.unlimitedMoney ? "∞" : String(game.earnedCoins);
