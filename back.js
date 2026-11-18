@@ -774,7 +774,7 @@ function territoryStyleForPlayer(userId) {
       opacity: 0,
       stroke: false,
       fillColor: "#35ddb0",
-      fillOpacity: 1
+      fillOpacity: 0.3
     };
   }
 
@@ -794,7 +794,7 @@ function territoryStyleForPlayer(userId) {
     opacity: 0,
     stroke: false,
     fillColor: `hsl(${hue}, ${saturation}%, ${lightness + 15}%)`,
-    fillOpacity: 1
+    fillOpacity: 0.3
   };
 }
 
@@ -859,33 +859,43 @@ async function tryEatTerritory(points) {
   const minLon = Math.min(...longitudes);
   const maxLon = Math.max(...longitudes);
 
-  const pageSize = 100;
-  for (let offset = 0; ; offset += pageSize) {
-    const { data: candidates, error: queryError } = await onlineClient
-      .from("territories")
-      .select("id,user_id,player_tag,area_m2")
-      .neq("user_id", onlineUserId)
-      .gte("max_lat", minLat)
-      .lte("min_lat", maxLat)
-      .gte("max_lon", minLon)
-      .lte("min_lon", maxLon)
-      .order("area_m2", { ascending: true })
-      .range(offset, offset + pageSize - 1);
+  let totalEatenAreaM2 = 0;
+  const eatenPlayers = [];
 
-    if (queryError) return { error: queryError };
-    if (!candidates?.length) break;
+  const { data: candidates, error: queryError } = await onlineClient
+    .from("territories")
+    .select("id,user_id,player_tag,area_m2")
+    .neq("user_id", onlineUserId)
+    .gte("max_lat", minLat)
+    .lte("min_lat", maxLat)
+    .gte("max_lon", minLon)
+    .lte("min_lon", maxLon)
+    .order("area_m2", { ascending: true })
+    .limit(500);
 
-    for (const target of candidates) {
-      const { data, error } = await onlineClient.rpc("consume_territory", {
-        p_target_id: target.id,
-        p_attack_points: points
-      });
+  if (queryError) return { error: queryError };
 
-      if (error) return { error };
-      if (data?.eaten) return data;
+  for (const target of candidates || []) {
+    const { data, error } = await onlineClient.rpc("consume_territory", {
+      p_target_id: target.id,
+      p_attack_points: points
+    });
+
+    if (error) return { error };
+    if (data?.eaten) {
+      totalEatenAreaM2 += Number(data.eaten_area_m2) || 0;
+      if (data.target_player_tag && !eatenPlayers.includes(data.target_player_tag)) {
+        eatenPlayers.push(data.target_player_tag);
+      }
     }
+  }
 
-    if (candidates.length < pageSize) break;
+  if (totalEatenAreaM2 > 0) {
+    return {
+      eaten: true,
+      eatenAreaM2: totalEatenAreaM2,
+      target_player_tag: eatenPlayers.join(", ")
+    };
   }
 
   return null;
@@ -982,8 +992,9 @@ function initializeMap() {
 
   capturedTerritoriesLayer = L.geoJSON(null, {
     color: "#1ba782",
-    weight: 2,
-    opacity: 0.95,
+    weight: 0,
+    opacity: 0,
+    stroke: false,
     fillColor: "#35ddb0",
     fillOpacity: 0.3
   }).addTo(map);
@@ -1531,10 +1542,11 @@ async function finishRoute() {
     const result = await tryEatTerritory(polygonPoints);
 
     if (result?.eaten) {
-      captureTerritory(polygonPoints, area, newArea, {
+      const eatenAreaM2 = Number(result.eatenAreaM2) || 0;
+      captureTerritory(polygonPoints, area, newArea + eatenAreaM2, {
         publish: false,
         eatenPlayer: result.target_player_tag,
-        eatenAreaM2: Number(result.eaten_area_m2) || 0
+        eatenAreaM2
       });
       await refreshOnlineTerritories();
       return;
