@@ -562,7 +562,7 @@ let routeFixes = [];
 let routeDistance = 0;
 let lastRoutePointAt = 0;
 let lastRouteAccuracy = 0;
-let capturedPolygons = [];
+let capturedTerritoriesLayer = null;
 let landmarkMarkers = [];
 let onlineTerritoriesLayer = null;
 let onlineClient = null;
@@ -889,6 +889,14 @@ function initializeMap() {
 
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
+  capturedTerritoriesLayer = L.geoJSON(null, {
+    color: "#1ba782",
+    weight: 2,
+    opacity: 0.95,
+    fillColor: "#35ddb0",
+    fillOpacity: 0.3
+  }).addTo(map);
+
   routeLine = L.polyline([], {
     color: "#765ff0",
     weight: 5,
@@ -898,11 +906,7 @@ function initializeMap() {
     smoothFactor: 0
   }).addTo(map);
 
-  game.capturedZones.forEach(zone => {
-    if (Array.isArray(zone.points) && zone.points.length >= 3) {
-      addCapturedPolygon(zone.points, false);
-    }
-  });
+  redrawCapturedTerritories(false);
 
   document.getElementById("locateButton").addEventListener("click", locatePlayer);
   document.getElementById("startRouteButton").addEventListener("click", startRoute);
@@ -1447,7 +1451,12 @@ async function finishRoute() {
 
     if (result?.error) {
       console.error("Territory eating failed:", result.error);
-      showToast("Не получилось поглотить чужую зону. Захват будет обычным.", true);
+      setGpsStatus(
+        "Не удалось обновить чужую территорию. Проверь SQL-скрипт и подключение к общей карте.",
+        "error"
+      );
+      showToast("Захват не сохранён: не удалось проверить чужую территорию.", true);
+      return;
     }
   }
 
@@ -1490,8 +1499,8 @@ function captureTerritory(points, area, newArea, options = {}) {
     points: points.map(point => [point[0], point[1]])
   });
 
-  routeLine?.setLatLngs([...points, points[0]]);
-  addCapturedPolygon(points, true);
+  routeLine?.setLatLngs([]);
+  redrawCapturedTerritories(true);
   saveState();
   updateMapStats();
 
@@ -1515,17 +1524,63 @@ function captureTerritory(points, area, newArea, options = {}) {
   if (game.shareTerritories && options.publish !== false) publishTerritory(points, area);
 }
 
-function addCapturedPolygon(points, fitBounds) {
-  const polygon = L.polygon(points, {
+function redrawCapturedTerritories(fitBounds) {
+  if (!capturedTerritoriesLayer) return;
+
+  const zones = game.capturedZones.filter(zone => isValidAreaPoints(zone?.points));
+  if (zones.length === 0) {
+    capturedTerritoriesLayer.clearLayers();
+    return;
+  }
+
+  const style = {
     color: "#1ba782",
     weight: 2,
     opacity: 0.95,
     fillColor: "#35ddb0",
     fillOpacity: 0.3
-  }).addTo(map);
+  };
 
-  capturedPolygons.push(polygon);
-  if (fitBounds) map.fitBounds(polygon.getBounds(), { padding: [36, 36] });
+  try {
+    const clipping = window.polygonClipping;
+    if (!clipping) throw new Error("Не загрузилась библиотека объединения территорий.");
+
+    const allPoints = zones.flatMap(zone => zone.points);
+    const originLat = allPoints.reduce((sum, point) => sum + point[0], 0) / allPoints.length;
+    const originLon = allPoints[0][1];
+    const radius = 6378137;
+    const latitudeScale = Math.cos(originLat * Math.PI / 180);
+    const union = clipping.union(
+      ...zones.map(zone => toClippingPolygon(zone.points, originLat, originLon))
+    );
+    const geometry = {
+      type: "MultiPolygon",
+      coordinates: union.map(polygon => polygon.map(ring => ring.map(point => [
+        originLon + point[0] / (radius * latitudeScale) * 180 / Math.PI,
+        originLat + point[1] / radius * 180 / Math.PI
+      ])))
+    };
+
+    if (!isValidTerritoryGeometry(geometry)) {
+      throw new Error("Объединённая геометрия территории некорректна.");
+    }
+
+    capturedTerritoriesLayer.clearLayers();
+    capturedTerritoriesLayer.addData(geometry);
+    if (fitBounds) {
+      map.fitBounds(capturedTerritoriesLayer.getBounds(), { padding: [36, 36] });
+    }
+  } catch (error) {
+    console.error("Captured territory outlines could not be merged:", error);
+    capturedTerritoriesLayer.clearLayers();
+    zones.forEach(zone => {
+      capturedTerritoriesLayer.addLayer(L.polygon(zone.points, style));
+    });
+    if (fitBounds) {
+      map.fitBounds(capturedTerritoriesLayer.getBounds(), { padding: [36, 36] });
+    }
+    showToast("Не удалось объединить контуры захваченных территорий.", true);
+  }
 }
 
 function updateMapStats() {
