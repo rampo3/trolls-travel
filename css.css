@@ -185,7 +185,9 @@ main {
 }
 
 .auth-card .auth-panel {
-  padding: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .auth-note {
@@ -599,7 +601,7 @@ body.auth-landing main {
 }
 
 .player-card strong {
-  margin-top: 4px;
+  margin-top: 0;
   font-size: 14px;
 }
 
@@ -741,10 +743,6 @@ body.auth-landing main {
 .auth-panel {
   display: grid;
   gap: 8px;
-  padding: 11px;
-  border: 1px solid rgba(216, 177, 94, 0.2);
-  border-radius: 11px;
-  background: rgba(0, 0, 0, 0.12);
 }
 
 #authFields {
@@ -754,6 +752,101 @@ body.auth-landing main {
 
 #authFields[hidden] {
   display: none;
+}
+
+.profile-settings {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(216, 177, 94, 0.2);
+  border-radius: 11px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.profile-settings h2 {
+  margin: 0 0 2px;
+  font-size: 14px;
+}
+
+.profile-settings .field-label {
+  margin: 3px 0 0;
+}
+
+.territory-palette {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.territory-color-option {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 56px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 4px;
+  border: 1px solid rgba(216, 177, 94, 0.16);
+  border-radius: 11px;
+  color: var(--muted);
+  background: linear-gradient(145deg, rgba(255, 241, 203, 0.035), rgba(0, 0, 0, 0.08));
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.territory-color-option:hover {
+  border-color: rgba(216, 177, 94, 0.48);
+  transform: translateY(-1px);
+}
+
+.territory-color-option:focus-within {
+  outline: 2px solid rgba(216, 177, 94, 0.42);
+  outline-offset: 2px;
+}
+
+.territory-color-option.selected {
+  border-color: #c7a86a;
+  color: var(--text);
+  background: linear-gradient(145deg, rgba(199, 168, 106, 0.18), rgba(199, 168, 106, 0.06));
+  box-shadow: inset 0 0 0 1px rgba(199, 168, 106, 0.12);
+}
+
+.territory-color-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.territory-color-swatch {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 2px solid rgba(238, 231, 210, 0.68);
+  border-radius: 50%;
+  background: var(--territory-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+.territory-color-name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-settings-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .auth-panel .field-label {

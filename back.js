@@ -8,12 +8,27 @@ const ROUTE_CLOSE_DISTANCE_M = 50;
 const MAX_ROUTE_SPEED_MPS = 5;
 const TERRITORY_SIMPLIFY_TOLERANCE_M = 8;
 const TERRITORY_SHARING_CONSENT_VERSION = 1;
+const DEFAULT_PLAYER_NICKNAME = "Путешественник";
+const DEFAULT_TERRITORY_COLOR = "#35ddb0";
+
+function normalizeNickname(value) {
+  if (typeof value !== "string") return null;
+  const nickname = value.trim();
+  const length = Array.from(nickname).length;
+  return length >= 2 && length <= 24 ? nickname : null;
+}
+
+function isValidTerritoryColor(value) {
+  return typeof value === "string" && /^#[\da-f]{6}$/i.test(value);
+}
 
 const defaultState = {
   unlimitedMoney: true,
   earnedCoins: 0,
   capturedArea: 0,
   captureCount: 0,
+  playerNickname: DEFAULT_PLAYER_NICKNAME,
+  territoryColor: DEFAULT_TERRITORY_COLOR,
   capturedZones: [],
   shareTerritories: false,
   shareTerritoriesConsentVersion: 0,
@@ -32,6 +47,11 @@ function loadState() {
     return {
       ...defaultState,
       ...saved,
+      playerNickname: normalizeNickname(saved.playerNickname)
+        || defaultState.playerNickname,
+      territoryColor: isValidTerritoryColor(saved.territoryColor)
+        ? saved.territoryColor.toLowerCase()
+        : defaultState.territoryColor,
       equipped: { ...defaultState.equipped, ...(saved.equipped || {}) },
       owned: Array.isArray(saved.owned)
         ? [...new Set([...defaultState.owned, ...saved.owned])]
@@ -600,6 +620,100 @@ function setAuthStatus(message, isError = false) {
   status.classList.toggle("error", isError);
 }
 
+function renderProfileControls() {
+  const nicknameInput = document.getElementById("playerNicknameInput");
+  const colorInput = document.getElementById("territoryColorInput");
+  const colorPalette = document.getElementById("territoryColorPalette");
+  const nicknameLabel = document.getElementById("playerNickname");
+
+  if (nicknameInput) nicknameInput.value = game.playerNickname;
+  if (colorInput) {
+    colorInput.value = game.territoryColor;
+  }
+  if (colorPalette) {
+    let colorOptions = Array.from(
+      colorPalette.querySelectorAll('input[name="territoryColorChoice"]')
+    );
+    const hasColorOption = colorOptions.some(option => option.value === game.territoryColor);
+    let customColorOption = colorPalette.querySelector("[data-custom-color]");
+    if (!hasColorOption) {
+      if (!customColorOption) {
+        customColorOption = document.createElement("label");
+        customColorOption.className = "territory-color-option";
+        customColorOption.dataset.customColor = "true";
+
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "territoryColorChoice";
+        const swatch = document.createElement("span");
+        swatch.className = "territory-color-swatch";
+        const name = document.createElement("span");
+        name.className = "territory-color-name";
+        customColorOption.append(radio, swatch, name);
+        colorPalette.append(customColorOption);
+      }
+
+      const radio = customColorOption.querySelector("input");
+      radio.value = game.territoryColor;
+      customColorOption.querySelector(".territory-color-swatch")
+        .style.setProperty("--territory-color", game.territoryColor);
+      customColorOption.querySelector(".territory-color-name").textContent =
+        `Текущий (${game.territoryColor.toUpperCase()})`;
+    } else if (customColorOption) {
+      customColorOption.remove();
+    }
+
+    colorOptions = Array.from(
+      colorPalette.querySelectorAll('input[name="territoryColorChoice"]')
+    );
+    colorOptions.forEach(option => {
+      const selected = option.value === game.territoryColor;
+      option.checked = selected;
+      option.closest(".territory-color-option").classList.toggle("selected", selected);
+    });
+  }
+  if (nicknameLabel) nicknameLabel.textContent = game.playerNickname;
+}
+
+function applyAccountProfile(user) {
+  const metadata = user?.user_metadata || {};
+  game.playerNickname = normalizeNickname(metadata.nickname)
+    || DEFAULT_PLAYER_NICKNAME;
+  game.territoryColor = isValidTerritoryColor(metadata.territory_color)
+    ? metadata.territory_color.toLowerCase()
+    : DEFAULT_TERRITORY_COLOR;
+  saveState();
+}
+
+function readProfileForm() {
+  const nicknameInput = document.getElementById("playerNicknameInput");
+  const colorInput = document.getElementById("territoryColorInput");
+  if (!nicknameInput || !colorInput || !nicknameInput.reportValidity()) return null;
+
+  const nickname = normalizeNickname(nicknameInput.value);
+  if (!nickname) {
+    nicknameInput.setCustomValidity("Никнейм должен содержать от 2 до 24 символов.");
+    nicknameInput.reportValidity();
+    nicknameInput.setCustomValidity("");
+    return null;
+  }
+
+  return {
+    nickname,
+    territoryColor: isValidTerritoryColor(colorInput.value)
+      ? colorInput.value.toLowerCase()
+      : DEFAULT_TERRITORY_COLOR
+  };
+}
+
+function applyLocalProfile(profile) {
+  game.playerNickname = profile.nickname;
+  game.territoryColor = profile.territoryColor;
+  saveState();
+  renderProfileControls();
+  redrawCapturedTerritories(false);
+}
+
 function renderAuthState(user) {
   const fields = document.getElementById("authFields");
   const logoutButton = document.getElementById("logoutAccountButton");
@@ -610,6 +724,7 @@ function renderAuthState(user) {
   if (!fields || !logoutButton || !registerButton || !loginButton
     || !guestButton || !accountButton) return;
 
+  renderProfileControls();
   const isGuest = !user || user.is_anonymous;
   fields.hidden = !isGuest;
   logoutButton.hidden = isGuest;
@@ -630,7 +745,8 @@ function setAuthBusy(isBusy) {
   [
     "registerAccountButton",
     "loginAccountButton",
-    "logoutAccountButton"
+    "logoutAccountButton",
+    "saveProfileButton"
   ].forEach(id => {
     const button = document.getElementById(id);
     if (button) button.disabled = isBusy;
@@ -645,6 +761,7 @@ function authErrorMessage(error) {
 async function updateOnlineIdentity(user) {
   onlineUser = user || null;
   onlineUserId = onlineUser?.id || null;
+  if (onlineUser && !onlineUser.is_anonymous) applyAccountProfile(onlineUser);
   renderAuthState(onlineUser);
   redrawCapturedTerritories(false);
   await refreshOnlineTerritories();
@@ -656,16 +773,23 @@ async function createPlayerAccount() {
     return;
   }
 
+  const profile = readProfileForm();
+  if (!profile) return;
   const emailInput = document.getElementById("authEmail");
   const passwordInput = document.getElementById("authPassword");
   if (!emailInput.reportValidity() || !passwordInput.reportValidity()) return;
 
+  applyLocalProfile(profile);
   setAuthBusy(true);
   try {
     const { data, error } = await onlineClient.auth.updateUser(
       {
         email: emailInput.value.trim(),
-        password: passwordInput.value
+        password: passwordInput.value,
+        data: {
+          nickname: profile.nickname,
+          territory_color: profile.territoryColor
+        }
       },
       { emailRedirectTo: window.location.href }
     );
@@ -686,6 +810,45 @@ async function createPlayerAccount() {
     setAuthStatus(authErrorMessage(error), true);
   } finally {
     setAuthBusy(false);
+  }
+}
+
+function continueAsGuest() {
+  const profile = readProfileForm();
+  if (!profile) {
+    setAuthStatus("Укажи никнейм длиной от 2 до 24 символов.", true);
+    return;
+  }
+  applyLocalProfile(profile);
+  enterGame();
+}
+
+async function savePlayerProfile() {
+  const profile = readProfileForm();
+  if (!profile) return;
+
+  const saveButton = document.getElementById("saveProfileButton");
+  saveButton.disabled = true;
+  try {
+    if (onlineUser && !onlineUser.is_anonymous) {
+      if (!onlineClient) throw new Error("Нет подключения к аккаунту.");
+      const { data, error } = await onlineClient.auth.updateUser({
+        data: {
+          nickname: profile.nickname,
+          territory_color: profile.territoryColor
+        }
+      });
+      if (error) throw error;
+      onlineUser = data.user;
+    }
+
+    applyLocalProfile(profile);
+    showToast("Настройки игрока сохранены.");
+  } catch (error) {
+    console.error("Player profile could not be saved:", error);
+    setAuthStatus(authErrorMessage(error), true);
+  } finally {
+    saveButton.disabled = false;
   }
 }
 
@@ -763,11 +926,24 @@ async function initializeOnline() {
   const loginButton = document.getElementById("loginAccountButton");
   const logoutButton = document.getElementById("logoutAccountButton");
   const continueGuestButton = document.getElementById("continueGuestButton");
+  const saveProfileButton = document.getElementById("saveProfileButton");
+  const territoryColorInput = document.getElementById("territoryColorInput");
+  const territoryColorPalette = document.getElementById("territoryColorPalette");
 
   registerButton.addEventListener("click", createPlayerAccount);
   loginButton.addEventListener("click", loginPlayerAccount);
   logoutButton.addEventListener("click", logoutPlayerAccount);
-  continueGuestButton.addEventListener("click", enterGame);
+  continueGuestButton.addEventListener("click", continueAsGuest);
+  saveProfileButton.addEventListener("click", savePlayerProfile);
+  territoryColorPalette.addEventListener("change", event => {
+    const option = event.target;
+    if (!(option instanceof HTMLInputElement)
+      || option.name !== "territoryColorChoice") return;
+
+    territoryColorInput.value = option.value.toLowerCase();
+    territoryColorPalette.querySelectorAll(".territory-color-option")
+      .forEach(item => item.classList.toggle("selected", item.contains(option)));
+  });
   renderAuthState(null);
 
   if (game.shareTerritories
@@ -831,12 +1007,17 @@ async function initializeOnline() {
     onlineUserId = session?.user?.id || null;
     if (!onlineUserId) throw new Error("Не удалось создать игровую сессию.");
     onlineUser = session.user;
+    if (!onlineUser.is_anonymous) applyAccountProfile(onlineUser);
     renderAuthState(onlineUser);
     if (!onlineUser.is_anonymous) enterGame();
     onlineClient.auth.onAuthStateChange((event, nextSession) => {
       const previousUserId = onlineUserId;
       onlineUser = nextSession?.user || null;
       onlineUserId = onlineUser?.id || null;
+      if (onlineUser && !onlineUser.is_anonymous
+        && (previousUserId !== onlineUserId || event === "USER_UPDATED")) {
+        applyAccountProfile(onlineUser);
+      }
       renderAuthState(onlineUser);
 
       if (previousUserId !== onlineUserId || event === "USER_UPDATED") {
@@ -964,13 +1145,14 @@ async function refreshOnlineTerritories(showFeedback = false) {
 }
 
 function territoryStyleForPlayer(userId) {
-  if (typeof userId !== "string" || userId.length === 0) {
+  if (typeof userId !== "string" || userId.length === 0 || userId === onlineUserId) {
+    const color = game.territoryColor;
     return {
-      color: "#1ba782",
+      color,
       weight: 0,
       opacity: 0,
       stroke: false,
-      fillColor: "#35ddb0",
+      fillColor: color,
       fillOpacity: 0.3
     };
   }
@@ -1106,7 +1288,7 @@ async function publishTerritory(points, area) {
 
   const latitudes = points.map(point => point[0]);
   const longitudes = points.map(point => point[1]);
-  const userTag = `Путник-${onlineUserId.slice(0, 5).toUpperCase()}`;
+  const userTag = game.playerNickname;
   setOnlineStatus("Публикую границы территории на общей карте…");
 
   const { error } = await onlineClient.from("territories").insert({
