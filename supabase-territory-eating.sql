@@ -1,5 +1,5 @@
--- Захват чужой территории TrollsTravel.
--- Выполни этот скрипт в SQL Editor после supabase-schema.sql.
+-- Частичное поглощение чужой территории TrollsTravel.
+-- Выполни после supabase-schema.sql в SQL Editor проекта Supabase.
 
 create extension if not exists postgis with schema extensions;
 
@@ -74,19 +74,25 @@ as $$
 declare
   current_user_id uuid := (select auth.uid());
   target public.territories%rowtype;
-  attack_shape extensions.geography;
-  target_shape extensions.geography;
+  attack_shape extensions.geometry;
+  target_shape extensions.geometry;
+  eaten_shape extensions.geometry;
+  remaining_shape extensions.geometry;
+  largest_remaining_component extensions.geometry;
   attack_area double precision;
+  eaten_area double precision;
+  remaining_area double precision;
   attack_latitudes double precision[];
   attack_longitudes double precision[];
+  remaining_points jsonb;
   attacker_tag text;
 begin
   if current_user_id is null then
     return jsonb_build_object('eaten', false, 'reason', 'authentication_required');
   end if;
 
-  attack_shape := public.territory_polygon(p_attack_points);
-  attack_area := extensions.ST_Area(attack_shape);
+  attack_shape := public.territory_polygon(p_attack_points)::extensions.geometry;
+  attack_area := extensions.ST_Area(attack_shape::extensions.geography);
   if attack_area < 1000 or attack_area > 5000000 then
     return jsonb_build_object('eaten', false, 'reason', 'invalid_attack_area');
   end if;
@@ -100,15 +106,38 @@ begin
     return jsonb_build_object('eaten', false, 'reason', 'target_unavailable');
   end if;
 
-  if attack_area <= target.area_m2 then
-    return jsonb_build_object('eaten', false, 'reason', 'attack_not_larger');
+  if target.geometry_json is null then
+    target_shape := public.territory_polygon(target.points)::extensions.geometry;
+  else
+    target_shape := extensions.ST_SetSRID(
+      extensions.ST_GeomFromGeoJSON(target.geometry_json::text),
+      4326
+    );
+    if extensions.ST_GeometryType(target_shape) not in (
+      'ST_Polygon',
+      'ST_MultiPolygon'
+    ) or not extensions.ST_IsValid(target_shape) then
+      raise exception 'Геометрия сохранённой территории некорректна';
+    end if;
   end if;
 
-  target_shape := public.territory_polygon(target.points);
-  if not extensions.ST_Covers(attack_shape::extensions.geometry,
-                              target_shape::extensions.geometry) then
-    return jsonb_build_object('eaten', false, 'reason', 'target_not_fully_covered');
+  eaten_shape := extensions.ST_CollectionExtract(
+    extensions.ST_Intersection(attack_shape, target_shape),
+    3
+  );
+  eaten_area := extensions.ST_Area(eaten_shape::extensions.geography);
+  if eaten_area <= 0 then
+    return jsonb_build_object('eaten', false, 'reason', 'no_overlap');
   end if;
+
+  remaining_shape := extensions.ST_CollectionExtract(
+    extensions.ST_Difference(target_shape, attack_shape),
+    3
+  );
+  remaining_area := case
+    when extensions.ST_IsEmpty(remaining_shape) then 0
+    else extensions.ST_Area(remaining_shape::extensions.geography)
+  end;
 
   select
     array_agg((item.point ->> 0)::double precision order by item.ordinality),
@@ -118,8 +147,45 @@ begin
 
   attacker_tag := 'Путник-' || upper(left(replace(current_user_id::text, '-', ''), 5));
 
-  -- Удаление цели и сохранение нового контура происходят в одной транзакции RPC.
-  delete from public.territories where id = target.id;
+  if remaining_area <= 0 then
+    delete from public.territories where id = target.id;
+  else
+    select component.geom
+    into largest_remaining_component
+    from extensions.ST_Dump(remaining_shape) as component(path, geom)
+    order by extensions.ST_Area(component.geom::extensions.geography) desc
+    limit 1;
+
+    select jsonb_agg(
+      jsonb_build_array(
+        extensions.ST_Y(vertex.geom),
+        extensions.ST_X(vertex.geom)
+      )
+      order by vertex.path
+    )
+    into remaining_points
+    from extensions.ST_DumpPoints(
+      extensions.ST_ExteriorRing(largest_remaining_component)
+    ) as vertex(path, geom);
+
+    update public.territories
+    set area_m2 = greatest(1, round(remaining_area)::integer),
+        points = remaining_points,
+        geometry_json = extensions.ST_AsGeoJSON(remaining_shape, 9)::jsonb,
+        min_lat = extensions.ST_YMin(
+          extensions.ST_Envelope(remaining_shape)::extensions.box3d
+        ),
+        max_lat = extensions.ST_YMax(
+          extensions.ST_Envelope(remaining_shape)::extensions.box3d
+        ),
+        min_lon = extensions.ST_XMin(
+          extensions.ST_Envelope(remaining_shape)::extensions.box3d
+        ),
+        max_lon = extensions.ST_XMax(
+          extensions.ST_Envelope(remaining_shape)::extensions.box3d
+        )
+    where id = target.id;
+  end if;
 
   insert into public.territories (
     user_id, player_tag, area_m2, points,
@@ -138,7 +204,8 @@ begin
   return jsonb_build_object(
     'eaten', true,
     'target_player_tag', target.player_tag,
-    'area_m2', round(attack_area)::integer
+    'eaten_area_m2', greatest(1, round(eaten_area)::integer),
+    'remaining_area_m2', greatest(0, round(remaining_area)::integer)
   );
 end;
 $$;
