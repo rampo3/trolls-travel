@@ -126,8 +126,11 @@ function showToast(message, isError = false) {
 
 const screens = [...document.querySelectorAll(".screen")];
 const navButtons = [...document.querySelectorAll("[data-screen]")];
+let gameAccessGranted = false;
 
 function showScreen(name) {
+  if (name !== "auth" && !gameAccessGranted) return;
+
   screens.forEach(screen => {
     screen.classList.toggle("active", screen.id === `${name}Screen`);
   });
@@ -145,6 +148,18 @@ function showScreen(name) {
     initializeTroll();
     setTimeout(resizeTroll, 60);
   }
+}
+
+function enterGame() {
+  gameAccessGranted = true;
+  document.body.classList.remove("auth-landing");
+  showScreen("home");
+}
+
+function showAuthLanding() {
+  gameAccessGranted = false;
+  document.body.classList.add("auth-landing");
+  showScreen("auth");
 }
 
 navButtons.forEach(button => {
@@ -590,13 +605,19 @@ function renderAuthState(user) {
   const logoutButton = document.getElementById("logoutAccountButton");
   const registerButton = document.getElementById("registerAccountButton");
   const loginButton = document.getElementById("loginAccountButton");
-  if (!fields || !logoutButton || !registerButton || !loginButton) return;
+  const guestButton = document.getElementById("continueGuestButton");
+  const accountButton = document.getElementById("accountNavButton");
+  if (!fields || !logoutButton || !registerButton || !loginButton
+    || !guestButton || !accountButton) return;
 
   const isGuest = !user || user.is_anonymous;
   fields.hidden = !isGuest;
   logoutButton.hidden = isGuest;
   registerButton.hidden = !isGuest;
   loginButton.hidden = !isGuest;
+  guestButton.hidden = Boolean(user && !isGuest);
+  accountButton.hidden = !user;
+  accountButton.textContent = isGuest ? "Войти" : "Аккаунт";
 
   if (user && !isGuest) {
     setAuthStatus(`Вошёл как ${user.email || "игрок"}.`);
@@ -652,11 +673,14 @@ async function createPlayerAccount() {
 
     await updateOnlineIdentity(data.user);
     passwordInput.value = "";
-    setAuthStatus(
-      data.user.email_confirmed_at
-        ? `Аккаунт ${data.user.email} готов. Текущий игрок и его территории сохранены.`
-        : `Проверь почту ${emailInput.value.trim()}, чтобы подтвердить адрес. Игрок и его ID сохранены.`
-    );
+    if (data.user.email_confirmed_at) {
+      enterGame();
+      showToast("Аккаунт создан. Текущий игрок и его территории сохранены.");
+    } else {
+      setAuthStatus(
+        `Проверь почту ${emailInput.value.trim()}, чтобы подтвердить адрес. Игрок и его ID сохранены.`
+      );
+    }
   } catch (error) {
     console.error("Player account registration failed:", error);
     setAuthStatus(authErrorMessage(error), true);
@@ -688,7 +712,8 @@ async function loginPlayerAccount() {
 
     await updateOnlineIdentity(data.user);
     passwordInput.value = "";
-    setAuthStatus(`Вошёл как ${data.user.email}.`);
+    enterGame();
+    showToast(`Выполнен вход: ${data.user.email}.`);
   } catch (error) {
     console.error("Player account sign-in failed:", error);
     setAuthStatus(authErrorMessage(error), true);
@@ -708,6 +733,7 @@ async function logoutPlayerAccount() {
     const { data, error } = await onlineClient.auth.signInAnonymously();
     if (error) throw error;
     await updateOnlineIdentity(data.user);
+    showAuthLanding();
     setAuthStatus("Вышел из аккаунта. Игра продолжится как гость.");
   } catch (error) {
     console.error("Player account sign-out failed:", error);
@@ -736,10 +762,12 @@ async function initializeOnline() {
   const registerButton = document.getElementById("registerAccountButton");
   const loginButton = document.getElementById("loginAccountButton");
   const logoutButton = document.getElementById("logoutAccountButton");
+  const continueGuestButton = document.getElementById("continueGuestButton");
 
   registerButton.addEventListener("click", createPlayerAccount);
   loginButton.addEventListener("click", loginPlayerAccount);
   logoutButton.addEventListener("click", logoutPlayerAccount);
+  continueGuestButton.addEventListener("click", enterGame);
   renderAuthState(null);
 
   if (game.shareTerritories
@@ -804,6 +832,7 @@ async function initializeOnline() {
     if (!onlineUserId) throw new Error("Не удалось создать игровую сессию.");
     onlineUser = session.user;
     renderAuthState(onlineUser);
+    if (!onlineUser.is_anonymous) enterGame();
     onlineClient.auth.onAuthStateChange((event, nextSession) => {
       const previousUserId = onlineUserId;
       onlineUser = nextSession?.user || null;
@@ -831,6 +860,7 @@ async function initializeOnline() {
   } catch (error) {
     console.error("Online mode initialization failed:", error);
     setOnlineStatus("Не удалось подключиться. Проверь настройки Supabase.", true);
+    setAuthStatus("Не удалось подключиться к Supabase. Можно продолжить как гость.", true);
   }
 }
 
@@ -1189,7 +1219,7 @@ function initializeMap() {
 
   map.whenReady(() => setTimeout(() => map.invalidateSize(), 80));
   updateMapStats();
-  initializeOnline();
+  refreshOnlineTerritories();
 }
 
 function distanceMeters(a, b) {
@@ -2036,3 +2066,4 @@ bindAppearanceControls();
 updateAppearanceControls();
 renderShop();
 updateMapStats();
+initializeOnline();
