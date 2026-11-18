@@ -1639,6 +1639,181 @@ body {
   background: #202118;
 }
 
+@media (max-width: 760px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 10px;
+    min-height: 0;
+    padding: 8px max(12px, env(safe-area-inset-right)) 6px
+      max(12px, env(safe-area-inset-left));
+  }
+
+  .brand {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+    font-size: 17px;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+  }
+
+  .wallet {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0;
+    padding: 7px 10px;
+    font-size: 15px;
+  }
+
+  .topnav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    order: 0;
+    width: 100%;
+    min-width: 0;
+    flex: 0 0 100%;
+    justify-content: flex-start;
+    gap: 5px;
+    padding: 3px 0 2px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+  }
+
+  .topnav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-button {
+    min-height: 42px;
+    flex: 0 0 auto;
+    padding: 8px 11px;
+    font-size: 12px;
+    scroll-snap-align: start;
+  }
+
+  body.auth-landing .topbar {
+    display: flex;
+    min-height: 64px;
+    padding: 8px 12px;
+  }
+
+  body.auth-landing main {
+    min-height: calc(100svh - 64px);
+    padding: 16px 14px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .auth-screen.active {
+    min-height: calc(100svh - 104px);
+  }
+
+  .auth-card {
+    padding: 22px 18px;
+    border-radius: 18px;
+  }
+
+  main {
+    padding: 14px 12px calc(26px + env(safe-area-inset-bottom));
+  }
+
+  .map-layout,
+  .character-layout {
+    gap: 12px;
+  }
+
+  .map-card,
+  .panel-card {
+    border-radius: 14px;
+  }
+
+  .map-toolbar {
+    gap: 9px;
+    padding: 11px;
+  }
+
+  .map-actions {
+    gap: 8px;
+  }
+
+  .map-actions .icon-button,
+  .map-actions .secondary-button {
+    min-height: 44px;
+  }
+
+  #mapCanvas {
+    height: min(56dvh, 500px);
+    min-height: 280px;
+  }
+
+  .map-stage {
+    min-height: 280px;
+  }
+
+  .map-legend {
+    gap: 8px 12px;
+    padding: 10px 11px;
+    font-size: 10px;
+  }
+
+  .side-panel {
+    gap: 10px;
+  }
+
+  .route-card .primary-button,
+  .route-card .secondary-button,
+  .online-card .secondary-button {
+    min-height: 46px;
+  }
+
+  .select-control,
+  .landmark-item {
+    min-height: 46px;
+  }
+
+  .troll-stage {
+    height: clamp(300px, 54dvh, 400px);
+  }
+
+  .shop-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .shop-item {
+    min-height: 180px;
+    padding: 15px;
+  }
+
+  .toast {
+    right: max(12px, env(safe-area-inset-right));
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    left: max(12px, env(safe-area-inset-left));
+    max-width: none;
+  }
+}
+
+@media (max-width: 760px) and (orientation: landscape) and (max-height: 520px) {
+  #mapCanvas {
+    height: 68dvh;
+    min-height: 230px;
+  }
+
+  .map-stage {
+    min-height: 230px;
+  }
+
+  .troll-stage {
+    height: 68dvh;
+    min-height: 260px;
+  }
+}
+
 .leaflet-popup-content-wrapper {
   border: 1px solid #514832;
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.42);
