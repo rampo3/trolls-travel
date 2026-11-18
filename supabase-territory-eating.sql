@@ -80,11 +80,15 @@ declare
   remaining_shape extensions.geometry;
   largest_remaining_component extensions.geometry;
   attack_area double precision;
+  own_shape extensions.geometry;
+  captured_shape extensions.geometry;
+  captured_area double precision;
   eaten_area double precision;
   remaining_area double precision;
   attack_latitudes double precision[];
   attack_longitudes double precision[];
   remaining_points jsonb;
+  captured_points jsonb;
   attacker_tag text;
 begin
   if current_user_id is null then
@@ -96,6 +100,32 @@ begin
   if attack_area < 1000 or attack_area > 5000000 then
     return jsonb_build_object('eaten', false, 'reason', 'invalid_attack_area');
   end if;
+
+  select extensions.ST_Union(
+    case
+      when territory.geometry_json is not null then
+        extensions.ST_SetSRID(
+          extensions.ST_GeomFromGeoJSON(territory.geometry_json::text),
+          4326
+        )
+      else public.territory_polygon(territory.points)::extensions.geometry
+    end
+  )
+  into own_shape
+  from public.territories as territory
+  where territory.user_id = current_user_id;
+
+  captured_shape := case
+    when own_shape is null or extensions.ST_IsEmpty(own_shape) then attack_shape
+    else extensions.ST_CollectionExtract(
+      extensions.ST_Difference(attack_shape, own_shape),
+      3
+    )
+  end;
+  captured_area := case
+    when captured_shape is null or extensions.ST_IsEmpty(captured_shape) then 0
+    else extensions.ST_Area(captured_shape::extensions.geography)
+  end;
 
   select t.* into target
   from public.territories as t
@@ -139,12 +169,6 @@ begin
     else extensions.ST_Area(remaining_shape::extensions.geography)
   end;
 
-  select
-    array_agg((item.point ->> 0)::double precision order by item.ordinality),
-    array_agg((item.point ->> 1)::double precision order by item.ordinality)
-  into attack_latitudes, attack_longitudes
-  from jsonb_array_elements(p_attack_points) with ordinality as item(point, ordinality);
-
   attacker_tag := 'Путник-' || upper(left(replace(current_user_id::text, '-', ''), 5));
 
   if remaining_area <= 0 then
@@ -187,25 +211,54 @@ begin
     where id = target.id;
   end if;
 
-  if not exists (
-    select 1
-    from public.territories
-    where user_id = current_user_id
-      and points = p_attack_points
-  ) then
-    insert into public.territories (
-      user_id, player_tag, area_m2, points,
-      min_lat, max_lat, min_lon, max_lon
-    ) values (
-      current_user_id,
-      attacker_tag,
-      round(attack_area)::integer,
-      p_attack_points,
-      (select min(value) from unnest(attack_latitudes) as value),
-      (select max(value) from unnest(attack_latitudes) as value),
-      (select min(value) from unnest(attack_longitudes) as value),
-      (select max(value) from unnest(attack_longitudes) as value)
-    );
+  if captured_area >= 1000 then
+    select component.geom
+    into largest_remaining_component
+    from extensions.ST_Dump(captured_shape) as component(path, geom)
+    order by extensions.ST_Area(component.geom::extensions.geography) desc
+    limit 1;
+
+    select jsonb_agg(
+      jsonb_build_array(
+        extensions.ST_Y(vertex.geom),
+        extensions.ST_X(vertex.geom)
+      )
+      order by vertex.path
+    )
+    into captured_points
+    from extensions.ST_DumpPoints(
+      extensions.ST_ExteriorRing(largest_remaining_component)
+    ) as vertex(path, geom);
+
+    if not exists (
+      select 1
+      from public.territories
+      where user_id = current_user_id
+        and points = captured_points
+    ) then
+      insert into public.territories (
+        user_id, player_tag, area_m2, points, geometry_json,
+        min_lat, max_lat, min_lon, max_lon
+      ) values (
+        current_user_id,
+        attacker_tag,
+        round(captured_area)::integer,
+        captured_points,
+        extensions.ST_AsGeoJSON(captured_shape, 9)::jsonb,
+        extensions.ST_YMin(
+          extensions.ST_Envelope(captured_shape)::extensions.box3d
+        ),
+        extensions.ST_YMax(
+          extensions.ST_Envelope(captured_shape)::extensions.box3d
+        ),
+        extensions.ST_XMin(
+          extensions.ST_Envelope(captured_shape)::extensions.box3d
+        ),
+        extensions.ST_XMax(
+          extensions.ST_Envelope(captured_shape)::extensions.box3d
+        )
+      );
+    end if;
   end if;
 
   return jsonb_build_object(
