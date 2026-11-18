@@ -651,6 +651,7 @@ async function initializeOnline() {
     onlineUserId = session?.user?.id || null;
     if (!onlineUserId) throw new Error("Не удалось создать игровую сессию.");
 
+    redrawCapturedTerritories(false);
     setOnlineStatus("Подключено. Чужие территории отображаются на карте.");
     await refreshOnlineTerritories();
 
@@ -695,13 +696,7 @@ async function refreshOnlineTerritories(showFeedback = false) {
   (data || []).forEach(zone => {
     if (zone.user_id === onlineUserId) return;
     let polygon;
-    const style = {
-      color: "#8b78ff",
-      weight: 2,
-      opacity: 0.95,
-      fillColor: "#8872ff",
-      fillOpacity: 0.24
-    };
+    const style = territoryStyleForPlayer(zone.user_id);
 
     if (zone.geometry_json) {
       if (!isValidTerritoryGeometry(zone.geometry_json)) return;
@@ -723,6 +718,36 @@ async function refreshOnlineTerritories(showFeedback = false) {
     ? `На этой области карты чужих территорий: ${visibleCount}.`
     : "В этой области карты чужих территорий пока нет.");
   if (showFeedback) showToast("Общая карта обновлена.");
+}
+
+function territoryStyleForPlayer(userId) {
+  if (typeof userId !== "string" || userId.length === 0) {
+    return {
+      color: "#1ba782",
+      weight: 2,
+      opacity: 0.95,
+      fillColor: "#35ddb0",
+      fillOpacity: 0.3
+    };
+  }
+
+  let hash = 2166136261;
+  for (let index = 0; index < userId.length; index += 1) {
+    hash = Math.imul(hash ^ userId.charCodeAt(index), 16777619);
+  }
+
+  const unsignedHash = hash >>> 0;
+  const hue = unsignedHash % 360;
+  const saturation = 68 + ((unsignedHash >>> 8) % 20);
+  const lightness = 42 + ((unsignedHash >>> 16) % 12);
+
+  return {
+    color: `hsl(${hue}, ${saturation}%, ${lightness - 13}%)`,
+    weight: 2,
+    opacity: 0.95,
+    fillColor: `hsl(${hue}, ${saturation}%, ${lightness + 15}%)`,
+    fillOpacity: 0.3
+  };
 }
 
 function isValidTerritoryPoints(points) {
@@ -1533,13 +1558,7 @@ function redrawCapturedTerritories(fitBounds) {
     return;
   }
 
-  const style = {
-    color: "#1ba782",
-    weight: 2,
-    opacity: 0.95,
-    fillColor: "#35ddb0",
-    fillOpacity: 0.3
-  };
+  const style = territoryStyleForPlayer(onlineUserId);
 
   try {
     const clipping = window.polygonClipping;
