@@ -770,8 +770,8 @@ function territoryStyleForPlayer(userId) {
   if (typeof userId !== "string" || userId.length === 0) {
     return {
       color: "#1ba782",
-      weight: 2,
-      opacity: 0.95,
+      weight: 0,
+      opacity: 0,
       fillColor: "#35ddb0",
       fillOpacity: 0.3
     };
@@ -789,8 +789,8 @@ function territoryStyleForPlayer(userId) {
 
   return {
     color: `hsl(${hue}, ${saturation}%, ${lightness - 13}%)`,
-    weight: 2,
-    opacity: 0.95,
+    weight: 0,
+    opacity: 0,
     fillColor: `hsl(${hue}, ${saturation}%, ${lightness + 15}%)`,
     fillOpacity: 0.3
   };
