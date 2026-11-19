@@ -28,7 +28,7 @@
       <button id="accountNavButton" class="nav-button" data-screen="auth" hidden>Войти</button>
     </nav>
 
-    <div class="wallet" title="В этой версии монеты бесконечные">
+    <div class="wallet" title="Монеты начисляются за новую территорию и тратятся на косметику">
       <span aria-hidden="true">◉</span>
       <span id="walletValue">∞</span>
       <small>монет</small>
@@ -293,8 +293,8 @@
             </button>
 
             <div class="formula-note">
-              Награда: <b>10 монет за каждый 1% новой игровой зоны.</b>
-              В этой версии баланс бесконечный.
+              Награда: <b>1 монета за каждые 1 000 м² новой территории.</b>
+              Покупай косметику в магазине за заработанные монеты.
             </div>
 
             <div class="online-card">
@@ -373,6 +373,10 @@
 
           <label class="field-label" for="armorSelect">Броня</label>
           <select id="armorSelect" class="select-control"></select>
+
+          <label class="field-label" for="weaponSelect">Оружие</label>
+          <select id="weaponSelect" class="select-control"></select>
+
           <label class="field-label" for="skinSelect">Цвет кожи</label>
           <select id="skinSelect" class="select-control">
             <option value="moss">Мшисто-зелёный</option>
@@ -409,14 +413,14 @@
 
       <div class="shop-banner">
         <div>
-          <span class="card-kicker">БЕСКОНЕЧНЫЙ БАЛАНС</span>
-          <h2>Выбирай любой образ</h2>
-          <p>Косметические предметы открываются бесплатно в этой версии.</p>
+          <span class="card-kicker">ЗАРАБАТЫВАЙ И ТРАТЬ</span>
+          <h2>Монеты за новые территории</h2>
+          <p>1 монета за каждые 1 000 м². Шлемы, броня и оружие — косметические предметы.</p>
         </div>
-        <div class="shop-infinity">∞ <small>монет</small></div>
+        <div class="shop-balance"><span id="shopBalance">50</span><small>монет</small></div>
       </div>
 
-      <div id="shopItems" class="shop-grid"></div>
+      <div id="shopItems" class="shop-categories"></div>
     </section>
   </main>
 

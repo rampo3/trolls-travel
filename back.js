@@ -1,8 +1,13 @@
 "use strict";
 
-const STORAGE_KEY = "trollsTravelMiniAgarioV1";
+const BASE_STORAGE_KEY = "trollsTravelMiniAgarioV1";
+const LOCAL_TEST_MODE = new URLSearchParams(location.search).get("test") === "1"
+  && (location.protocol === "file:"
+    || ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname));
+const STORAGE_KEY = LOCAL_TEST_MODE ? `${BASE_STORAGE_KEY}:test` : BASE_STORAGE_KEY;
 const PLAYABLE_WORLD_AREA_M2 = 107_455_488;
-const COINS_PER_PERCENT = 10;
+const COINS_PER_CAPTURED_AREA_M2 = 1_000;
+const ECONOMY_VERSION = 1;
 const MIN_CAPTURE_AREA_M2 = 1_000;
 const ROUTE_CLOSE_DISTANCE_M = 50;
 const MAX_ROUTE_SPEED_MPS = 5;
@@ -23,8 +28,8 @@ function isValidTerritoryColor(value) {
 }
 
 const defaultState = {
-  unlimitedMoney: true,
-  earnedCoins: 0,
+  economyVersion: ECONOMY_VERSION,
+  coins: 50,
   capturedArea: 0,
   captureCount: 0,
   playerNickname: DEFAULT_PLAYER_NICKNAME,
@@ -32,32 +37,55 @@ const defaultState = {
   capturedZones: [],
   shareTerritories: false,
   shareTerritoriesConsentVersion: 0,
-  owned: ["helmet-none", "armor-leather"],
+  owned: ["helmet-none", "armor-none", "weapon-none"],
   equipped: {
     helmet: "helmet-none",
-    armor: "armor-leather",
-    skin: "moss",
+    armor: "armor-none",
+    weapon: "weapon-none",
+    skin: "olive",
     hair: "dark"
   }
 };
 
 function loadState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    return {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    const saved = parsed && typeof parsed === "object" ? parsed : {};
+    const hasCurrentEconomy = saved.economyVersion === ECONOMY_VERSION
+      && Number.isSafeInteger(saved.coins)
+      && saved.coins >= 0;
+    const legacyCoins = Number.isSafeInteger(saved.earnedCoins)
+      ? Math.max(0, saved.earnedCoins)
+      : 0;
+    const legacyItemIds = {
+      "helmet-horns": "helmet-viking",
+      "armor-fur": "armor-scandinavian"
+    };
+    const equipped = { ...defaultState.equipped, ...(saved.equipped || {}) };
+    equipped.helmet = legacyItemIds[equipped.helmet] || equipped.helmet;
+    equipped.armor = legacyItemIds[equipped.armor] || equipped.armor;
+    const owned = Array.isArray(saved.owned)
+      ? saved.owned.map(id => legacyItemIds[id] || id)
+      : [];
+    const state = {
       ...defaultState,
       ...saved,
+      economyVersion: ECONOMY_VERSION,
+      coins: hasCurrentEconomy
+        ? saved.coins
+        : Math.max(defaultState.coins, legacyCoins),
       playerNickname: normalizeNickname(saved.playerNickname)
         || defaultState.playerNickname,
       territoryColor: isValidTerritoryColor(saved.territoryColor)
         ? saved.territoryColor.toLowerCase()
         : defaultState.territoryColor,
-      equipped: { ...defaultState.equipped, ...(saved.equipped || {}) },
-      owned: Array.isArray(saved.owned)
-        ? [...new Set([...defaultState.owned, ...saved.owned])]
-        : [...defaultState.owned],
+      equipped: { ...equipped, weapon: equipped.weapon || defaultState.equipped.weapon },
+      owned: [...new Set([...defaultState.owned, ...owned])],
       capturedZones: Array.isArray(saved.capturedZones) ? saved.capturedZones : []
     };
+    delete state.unlimitedMoney;
+    delete state.earnedCoins;
+    return state;
   } catch {
     return structuredClone(defaultState);
   }
@@ -79,49 +107,151 @@ const cosmetics = [
     type: "helmet",
     name: "Без шлема",
     description: "Естественный вид путешественника.",
-    icon: "♟"
+    icon: "♟",
+    price: 0
+  },
+  {
+    id: "helmet-normal",
+    type: "helmet",
+    name: "Обычный шлем",
+    description: "Простой кожаный шлем для первых вылазок.",
+    icon: "🪖",
+    price: 40
   },
   {
     id: "helmet-iron",
     type: "helmet",
-    name: "Железный шлем",
-    description: "Прочный шлем для дальних прогулок.",
-    icon: "⛑"
+    name: "Рыцарский железный шлем",
+    description: "Стальная полусфера с защитой носа.",
+    icon: "⛑",
+    price: 100
   },
   {
-    id: "helmet-horns",
+    id: "helmet-viking",
     type: "helmet",
-    name: "Рогатый шлем",
-    description: "Большие рога и суровый вид.",
-    icon: "♜"
+    name: "Шлем викингов",
+    description: "Кованый шлем с парой загнутых рогов.",
+    icon: "🪓",
+    price: 150
+  },
+  {
+    id: "helmet-crown",
+    type: "helmet",
+    name: "Корона",
+    description: "Золотая корона для повелителя округа.",
+    icon: "♛",
+    price: 250
+  },
+  {
+    id: "helmet-oni",
+    type: "helmet",
+    name: "Маска они",
+    description: "Красная демоническая маска с клыками.",
+    icon: "👹",
+    price: 275
+  },
+  {
+    id: "armor-none",
+    type: "armor",
+    name: "Без брони",
+    description: "Свободный вид для тролля-путешественника.",
+    icon: "—",
+    price: 0
   },
   {
     id: "armor-leather",
     type: "armor",
     name: "Кожаная броня",
-    description: "Лёгкая броня для исследователя.",
-    icon: "🛡"
+    description: "Плечевая накладка и ремни из тёмной кожи.",
+    icon: "🛡",
+    price: 60
   },
   {
     id: "armor-iron",
     type: "armor",
-    name: "Стальная броня",
+    name: "Железная броня",
     description: "Тяжёлый нагрудник с металлическими наплечниками.",
-    icon: "⚔"
+    icon: "⚔",
+    price: 120
   },
   {
-    id: "armor-fur",
+    id: "armor-gold",
     type: "armor",
-    name: "Северный мех",
-    description: "Тёплый плащ для холодных земель.",
-    icon: "❄"
+    name: "Золотая броня",
+    description: "Полированный нагрудник с золотыми пластинами.",
+    icon: "👑",
+    price: 260
+  },
+  {
+    id: "armor-scandinavian",
+    type: "armor",
+    name: "Скандинавская броня",
+    description: "Меховой воротник и перекрёстные кожаные ремни.",
+    icon: "🐺",
+    price: 170
+  },
+  {
+    id: "armor-japanese",
+    type: "armor",
+    name: "Японская броня",
+    description: "Лакированные красные пластины и пояс-оби.",
+    icon: "⛩",
+    price: 220
+  },
+  {
+    id: "weapon-none",
+    type: "weapon",
+    name: "Без оружия",
+    description: "Свободные руки.",
+    icon: "—",
+    price: 0
+  },
+  {
+    id: "weapon-club",
+    type: "weapon",
+    name: "Дубина",
+    description: "Тяжёлая деревянная дубина с шипами.",
+    icon: "🪵",
+    price: 40
+  },
+  {
+    id: "weapon-dagger",
+    type: "weapon",
+    name: "Кинжал",
+    description: "Короткий клинок для быстрой руки.",
+    icon: "🗡",
+    price: 70
+  },
+  {
+    id: "weapon-sword",
+    type: "weapon",
+    name: "Меч",
+    description: "Прямой стальной меч с широкой гардой.",
+    icon: "⚔",
+    price: 100
+  },
+  {
+    id: "weapon-katana",
+    type: "weapon",
+    name: "Катана",
+    description: "Изогнутый клинок с обмотанной рукоятью.",
+    icon: "🗡",
+    price: 160
+  },
+  {
+    id: "weapon-fire-axe",
+    type: "weapon",
+    name: "Огненный топор",
+    description: "Двуручный топор с раскалённым лезвием.",
+    icon: "🔥",
+    price: 320
   }
 ];
 
 const skinColors = {
   moss: 0x78977d,
   stone: 0x87908d,
-  olive: 0x9a9c62
+  olive: 0x9b865d
 };
 
 const hairColors = {
@@ -140,6 +270,19 @@ function showToast(message, isError = false) {
 
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove("visible"), 3600);
+}
+
+function formatCoins(coins) {
+  return coins.toLocaleString("ru-RU");
+}
+
+function updateWallet() {
+  const formattedCoins = LOCAL_TEST_MODE ? "∞" : formatCoins(game.coins);
+  document.getElementById("walletValue").textContent = formattedCoins;
+  document.getElementById("shopBalance").textContent = formattedCoins;
+  document.querySelector(".wallet").title = LOCAL_TEST_MODE
+    ? "Тестовый режим: покупки не расходуют монеты"
+    : "Монеты начисляются за новую территорию и тратятся на косметику";
 }
 
 /* Навигация */
@@ -162,6 +305,10 @@ function showScreen(name) {
   if (name === "map") {
     initializeMap();
     setTimeout(() => map?.invalidateSize(), 80);
+  }
+
+  if (name === "shop") {
+    renderShop();
   }
 
   if (name === "character") {
@@ -210,6 +357,7 @@ function populateSelect(selectId, type) {
 function updateAppearanceControls() {
   populateSelect("helmetSelect", "helmet");
   populateSelect("armorSelect", "armor");
+  populateSelect("weaponSelect", "weapon");
 
   document.getElementById("skinSelect").value = game.equipped.skin;
   document.getElementById("hairSelect").value = game.equipped.hair;
@@ -219,6 +367,7 @@ function bindAppearanceControls() {
   const controls = [
     ["helmetSelect", "helmet"],
     ["armorSelect", "armor"],
+    ["weaponSelect", "weapon"],
     ["skinSelect", "skin"],
     ["hairSelect", "hair"]
   ];
@@ -234,22 +383,36 @@ function bindAppearanceControls() {
 
 function renderShop() {
   const container = document.getElementById("shopItems");
+  const categories = [
+    { type: "helmet", title: "Шлемы" },
+    { type: "armor", title: "Броня" },
+    { type: "weapon", title: "Оружие" }
+  ];
 
-  container.innerHTML = cosmetics.map(item => {
-    const owned = game.owned.includes(item.id);
-    return `
-      <article class="shop-item">
-        <div class="shop-item-preview">${item.icon}</div>
-        <h3>${item.name}</h3>
-        <p>${item.description}</p>
-        <button
-          class="${owned ? "secondary-button" : "primary-button"}"
-          data-cosmetic="${item.id}">
-          ${owned ? "Надеть" : "Открыть бесплатно"}
-        </button>
-      </article>
-    `;
-  }).join("");
+  container.innerHTML = categories.map(category => `
+    <section class="shop-category">
+      <h2>${category.title}</h2>
+      <div class="shop-grid">
+        ${cosmetics.filter(item => item.type === category.type).map(item => {
+          const owned = game.owned.includes(item.id);
+          const canAfford = owned || LOCAL_TEST_MODE || game.coins >= item.price;
+          return `
+            <article class="shop-item">
+              <div class="shop-item-preview">${item.icon}</div>
+              <h3>${item.name}</h3>
+              <p>${item.description}</p>
+              <button
+                class="${owned ? "secondary-button" : "primary-button"}"
+                ${canAfford ? "" : "disabled"}
+                data-cosmetic="${item.id}">
+                ${owned ? "Надеть" : `Купить · ${formatCoins(item.price)} монет`}
+              </button>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `).join("");
 
   container.querySelectorAll("[data-cosmetic]").forEach(button => {
     button.addEventListener("click", () => {
@@ -257,12 +420,25 @@ function renderShop() {
       if (!item) return;
 
       if (!game.owned.includes(item.id)) {
+        if (!Number.isSafeInteger(item.price) || item.price < 0) {
+          console.error(`Invalid shop price for cosmetic "${item.id}".`);
+          showToast("Не удалось определить цену предмета.", true);
+          return;
+        }
+        if (!LOCAL_TEST_MODE && game.coins < item.price) {
+          showToast(`Не хватает монет: нужно ${formatCoins(item.price)}.`, true);
+          return;
+        }
+        if (!LOCAL_TEST_MODE) game.coins -= item.price;
         game.owned.push(item.id);
-        showToast(`Открыто: ${item.name}. Стоимость — 0 монет.`);
+        showToast(LOCAL_TEST_MODE
+          ? `Открыто для тестирования: ${item.name}.`
+          : `Куплено: ${item.name} за ${formatCoins(item.price)} монет.`);
       }
 
       game.equipped[item.type] = item.id;
       saveState();
+      updateWallet();
       renderShop();
       updateAppearanceControls();
       rebuildTroll();
@@ -292,6 +468,61 @@ function addSphere(parent, x, y, z, sx, sy, sz, material) {
 
   mesh.position.set(x, y, z);
   mesh.scale.set(sx, sy, sz);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function addBox(parent, x, y, z, sx, sy, sz, material, rotationZ = 0) {
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(sx, sy, sz),
+    material
+  );
+
+  mesh.position.set(x, y, z);
+  mesh.rotation.z = rotationZ;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function addCone(parent, x, y, z, radius, height, material, rotationZ = 0) {
+  const mesh = new THREE.Mesh(
+    new THREE.ConeGeometry(radius, height, 9),
+    material
+  );
+
+  mesh.position.set(x, y, z);
+  mesh.rotation.z = rotationZ;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  parent.add(mesh);
+  return mesh;
+}
+
+function addClothPanel(parent, x, y, z, points, material) {
+  const shape = new THREE.Shape();
+  shape.moveTo(points[0][0], points[0][1]);
+  points.slice(1).forEach(([pointX, pointY]) => shape.lineTo(pointX, pointY));
+  shape.closePath();
+
+  const frontMaterial = material.clone();
+  frontMaterial.side = THREE.DoubleSide;
+  const mesh = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(shape, {
+      depth: 0.045,
+      bevelEnabled: true,
+      bevelSegments: 1,
+      bevelSize: 0.018,
+      bevelThickness: 0.018,
+      steps: 1
+    }),
+    frontMaterial
+  );
+
+  mesh.position.set(x, y, z);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   parent.add(mesh);
@@ -329,47 +560,195 @@ function addBetween(parent, start, end, radius, material) {
   return mesh;
 }
 
-function addTrollHelmet(parent, metalMaterial, leatherMaterial) {
+function addTrollHelmet(
+  parent,
+  metalMaterial,
+  leatherMaterial,
+  leatherLight,
+  goldMaterial,
+  oniMaterial,
+  toothMaterial,
+  beltMaterial
+) {
   const helmetId = game.equipped.helmet;
 
   if (helmetId === "helmet-none") return;
 
-  addSphere(parent, 0, 2.76, 0, 0.52, 0.3, 0.46, metalMaterial);
-  addCylinder(parent, 0, 2.61, 0, 0.51, 0.51, 0.12, metalMaterial);
-  addSphere(parent, 0, 2.54, 0.36, 0.39, 0.09, 0.18, metalMaterial);
+  if (helmetId === "helmet-normal") {
+    addSphere(parent, 0, 2.98, 0, 0.5, 0.19, 0.43, leatherMaterial);
+    addCylinder(parent, 0, 2.88, 0, 0.48, 0.48, 0.07, leatherLight);
+    [-0.3, 0.3].forEach(x => addSphere(parent, x, 2.9, 0.34, 0.035, 0.035, 0.025, beltMaterial));
+    return;
+  }
 
-  if (helmetId === "helmet-horns") {
-    const hornMaterial = makeMaterial(0xd6c59b);
-    const leftStart = new THREE.Vector3(-0.42, 2.77, 0);
-    const leftEnd = new THREE.Vector3(-0.76, 3.05, 0.02);
-    const rightStart = new THREE.Vector3(0.42, 2.77, 0);
-    const rightEnd = new THREE.Vector3(0.76, 3.05, 0.02);
+  if (helmetId === "helmet-oni") {
+    addSphere(parent, 0, 2.43, 0.49, 0.4, 0.2, 0.12, oniMaterial);
+    [-1, 1].forEach(side => {
+      addSphere(parent, side * 0.19, 2.55, 0.57, 0.09, 0.035, 0.035, leatherMaterial);
+      addCone(parent, side * 0.31, 2.7, 0.43, 0.1, 0.36, oniMaterial, -side * 0.45);
+      addCone(parent, side * 0.2, 2.34, 0.59, 0.06, 0.2, toothMaterial);
+    });
+    addSphere(parent, 0, 2.46, 0.62, 0.08, 0.06, 0.04, beltMaterial);
+    return;
+  }
 
-    addBetween(parent, leftStart, leftEnd, 0.1, hornMaterial);
-    addBetween(parent, rightStart, rightEnd, 0.1, hornMaterial);
+  if (helmetId === "helmet-crown") {
+    addCylinder(parent, 0, 2.98, 0, 0.47, 0.47, 0.1, goldMaterial);
+    [-0.34, -0.17, 0, 0.17, 0.34].forEach((x, index) => {
+      addCone(
+        parent,
+        x,
+        3.1 + (index % 2) * 0.03,
+        0,
+        0.075,
+        0.3 + (index % 2) * 0.05,
+        goldMaterial
+      );
+    });
+    addSphere(parent, 0, 3.04, 0.44, 0.08, 0.08, 0.04, oniMaterial);
+    return;
+  }
+
+  addSphere(parent, 0, 2.98, 0, 0.52, 0.25, 0.45, metalMaterial);
+  addCylinder(parent, 0, 2.87, 0, 0.5, 0.5, 0.09, metalMaterial);
+  addBox(parent, 0, 2.7, 0.46, 0.09, 0.32, 0.08, metalMaterial);
+  [-0.34, 0.34].forEach(x => addSphere(parent, x, 2.91, 0.31, 0.045, 0.045, 0.035, beltMaterial));
+
+  if (helmetId === "helmet-viking") {
+    [-1, 1].forEach(side => {
+      addCone(parent, side * 0.45, 3.02, 0, 0.12, 0.46, toothMaterial, -side * 0.85);
+    });
   } else {
-    addSphere(parent, 0, 2.77, 0.06, 0.18, 0.22, 0.09, leatherMaterial);
+    addSphere(parent, 0, 2.97, 0.02, 0.15, 0.2, 0.08, leatherMaterial);
   }
 }
 
-function addHair(parent, hairMaterial) {
-  addSphere(parent, 0, 2.87, -0.18, 0.52, 0.22, 0.42, hairMaterial);
+function addTrollWeapon(
+  parent,
+  woodMaterial,
+  metalMaterial,
+  leatherMaterial,
+  beltMaterial,
+  fireMaterial,
+  flameCore
+) {
+  const weaponId = game.equipped.weapon;
+  if (weaponId === "weapon-none") return;
 
-  for (let i = 0; i < 9; i += 1) {
-    const angle = (i / 9) * Math.PI * 2;
-    const x = Math.cos(angle) * 0.39;
-    const z = -0.18 + Math.sin(angle) * 0.34;
-
-    const tuft = new THREE.Mesh(
-      new THREE.ConeGeometry(0.105, 0.38 + (i % 3) * 0.04, 8),
-      hairMaterial
+  if (weaponId === "weapon-fire-axe") {
+    addBetween(
+      parent,
+      new THREE.Vector3(0, 1.68, 0.53),
+      new THREE.Vector3(0, 0.7, 0.53),
+      0.07,
+      woodMaterial
     );
+    addBetween(
+      parent,
+      new THREE.Vector3(-0.02, 1.38, 0.57),
+      new THREE.Vector3(0.02, 1.28, 0.57),
+      0.095,
+      leatherMaterial
+    );
+    addBetween(
+      parent,
+      new THREE.Vector3(-0.02, 1.08, 0.57),
+      new THREE.Vector3(0.02, 0.98, 0.57),
+      0.095,
+      beltMaterial
+    );
+    addClothPanel(parent, 0, 1.91, 0.54, [
+      [-0.08, 0.12], [-0.32, 0.27], [-0.57, 0.16], [-0.52, -0.02],
+      [-0.31, -0.2], [-0.08, -0.1]
+    ], fireMaterial);
+    addClothPanel(parent, 0, 1.91, 0.59, [
+      [0.08, 0.12], [0.32, 0.27], [0.57, 0.16], [0.52, -0.02],
+      [0.31, -0.2], [0.08, -0.1]
+    ], fireMaterial);
+    [-1, 1].forEach(side => {
+      addCone(parent, side * 0.43, 2.19, 0.62, 0.1, 0.3, flameCore, side * 0.45);
+      addSphere(parent, side * 0.25, 1.94, 0.63, 0.07, 0.08, 0.035, beltMaterial);
+    });
+    addCone(parent, 0, 2.23, 0.6, 0.09, 0.3, fireMaterial);
+    return;
+  }
 
-    tuft.position.set(x, 3.0 + (i % 2) * 0.04, z);
-    tuft.rotation.z = Math.sin(angle) * 0.7;
-    tuft.rotation.x = Math.cos(angle) * 0.35;
-    tuft.castShadow = true;
-    parent.add(tuft);
+  const gripX = -1.02;
+  const gripZ = 0.24;
+
+  if (weaponId === "weapon-club") {
+    addBetween(
+      parent,
+      new THREE.Vector3(gripX, 1.08, gripZ),
+      new THREE.Vector3(-1.08, 0.26, gripZ),
+      0.075,
+      woodMaterial
+    );
+    addBetween(
+      parent,
+      new THREE.Vector3(-1.08, 0.46, gripZ),
+      new THREE.Vector3(-1.12, 0.82, gripZ),
+      0.13,
+      woodMaterial
+    );
+    [-1, 1].forEach(side => {
+      addCone(parent, -1.12 + side * 0.11, 0.67, gripZ + 0.08, 0.045, 0.16, metalMaterial, side * 0.65);
+    });
+    return;
+  }
+
+  addBetween(
+    parent,
+    new THREE.Vector3(gripX, 1.08, gripZ),
+    new THREE.Vector3(gripX, 0.82, gripZ),
+    0.065,
+    leatherMaterial
+  );
+  addBetween(
+    parent,
+    new THREE.Vector3(gripX - 0.13, 0.84, gripZ + 0.015),
+    new THREE.Vector3(gripX + 0.13, 0.84, gripZ + 0.015),
+    0.045,
+    metalMaterial
+  );
+
+  if (weaponId === "weapon-dagger") {
+    addClothPanel(parent, gripX, 0.82, gripZ + 0.04, [
+      [-0.075, 0], [0.075, 0], [0.09, -0.12], [0.045, -0.35], [0, -0.48], [-0.045, -0.35], [-0.09, -0.12]
+    ], metalMaterial);
+    return;
+  }
+
+  if (weaponId === "weapon-katana") {
+    addClothPanel(parent, gripX, 0.82, gripZ + 0.04, [
+      [-0.07, 0], [0.07, 0], [0.12, -0.2], [0.08, -0.52], [0.16, -0.83],
+      [0.02, -0.96], [-0.08, -0.66], [-0.12, -0.32]
+    ], metalMaterial);
+    [-0.04, 0.04].forEach(x => addSphere(parent, gripX + x, 0.93, gripZ + 0.06, 0.025, 0.035, 0.02, beltMaterial));
+    return;
+  }
+
+  addClothPanel(parent, gripX, 0.82, gripZ + 0.04, [
+    [-0.09, 0], [0.09, 0], [0.11, -0.2], [0.15, -0.58], [0, -0.82],
+    [-0.15, -0.58], [-0.11, -0.2]
+  ], metalMaterial);
+}
+
+function addHair(parent, hairMaterial) {
+  addSphere(parent, 0, 2.94, -0.12, 0.38, 0.17, 0.31, hairMaterial);
+
+  for (let index = 0; index < 5; index += 1) {
+    const offset = index - 2;
+    addCone(
+      parent,
+      offset * 0.12,
+      3.08 - Math.abs(offset) * 0.018,
+      -0.1,
+      0.115,
+      0.32 + (index % 2) * 0.06,
+      hairMaterial,
+      offset * -0.16
+    );
   }
 }
 
@@ -388,100 +767,339 @@ function buildTroll() {
   scene.add(trollGroup);
 
   const skinMaterial = makeMaterial(skinColors[game.equipped.skin] || skinColors.moss);
-  const darkerSkin = makeMaterial(0x526b5f);
+  const darkerSkin = makeMaterial(0x59604b);
+  const innerEarMaterial = makeMaterial(0x76614a);
   const hairMaterial = makeMaterial(hairColors[game.equipped.hair] || hairColors.dark);
   const leatherMaterial = makeMaterial(0x503d2f);
   const leatherLight = makeMaterial(0x785b3e);
-  const metalMaterial = makeMaterial(0x85958d, 0.38, 0.62);
-  const bootMaterial = makeMaterial(0x302c2b);
-  const eyeMaterial = makeMaterial(0xf3df9b, 0.25);
+  const clothMaterial = makeMaterial(0x344a35);
+  const metalMaterial = makeMaterial(0x7d8d85, 0.38, 0.62);
+  const goldMaterial = makeMaterial(0xd0a43b, 0.3, 0.72);
+  const japaneseMaterial = makeMaterial(0x762d2d, 0.42, 0.24);
+  const oniMaterial = makeMaterial(0x9b3028, 0.55, 0.05);
+  const woodMaterial = makeMaterial(0x59402a);
+  const fireMaterial = makeMaterial(0xd84620, 0.34, 0.22);
+  const flameCore = makeMaterial(0xffb52e, 0.32, 0.05);
+  const eyeMaterial = makeMaterial(0xf2d58d, 0.25);
+  const irisMaterial = makeMaterial(0x9b542b, 0.3);
   const pupilMaterial = makeMaterial(0x261d19, 0.2);
-  const toothMaterial = makeMaterial(0xe5d8b7);
+  const toothMaterial = makeMaterial(0xe7d7b6);
+  const beltMaterial = makeMaterial(0xb18a43, 0.42, 0.56);
 
-  // Ноги и сапоги
+  // Тяжёлые ноги и открытые пальцы
   addBetween(
     trollGroup,
-    new THREE.Vector3(-0.22, 1.05, 0),
-    new THREE.Vector3(-0.3, 0.28, 0),
-    0.17,
+    new THREE.Vector3(-0.24, 1.08, 0),
+    new THREE.Vector3(-0.35, 0.53, 0.02),
+    0.25,
     skinMaterial
   );
   addBetween(
     trollGroup,
-    new THREE.Vector3(0.22, 1.05, 0),
-    new THREE.Vector3(0.3, 0.28, 0),
-    0.17,
+    new THREE.Vector3(0.24, 1.08, 0),
+    new THREE.Vector3(0.35, 0.53, 0.02),
+    0.25,
     skinMaterial
   );
-  addSphere(trollGroup, -0.34, 0.18, 0.08, 0.28, 0.14, 0.38, bootMaterial);
-  addSphere(trollGroup, 0.34, 0.18, 0.08, 0.28, 0.14, 0.38, bootMaterial);
+  addSphere(trollGroup, -0.34, 0.48, 0.02, 0.28, 0.24, 0.3, skinMaterial);
+  addSphere(trollGroup, 0.34, 0.48, 0.02, 0.28, 0.24, 0.3, skinMaterial);
+  addBetween(
+    trollGroup,
+    new THREE.Vector3(-0.35, 0.47, 0.04),
+    new THREE.Vector3(-0.37, 0.26, 0.08),
+    0.2,
+    leatherLight
+  );
+  addBetween(
+    trollGroup,
+    new THREE.Vector3(0.35, 0.47, 0.04),
+    new THREE.Vector3(0.37, 0.26, 0.08),
+    0.2,
+    leatherLight
+  );
+  addSphere(trollGroup, -0.35, 0.16, 0.23, 0.24, 0.13, 0.33, skinMaterial);
+  addSphere(trollGroup, 0.35, 0.16, 0.23, 0.24, 0.13, 0.33, skinMaterial);
+  [-0.45, -0.31, -0.17, 0.17, 0.31, 0.45].forEach(x => {
+    const side = x < 0 ? -1 : 1;
+    const toeZ = 0.49 - Math.abs(x) * 0.18;
+    addSphere(trollGroup, x, 0.105, toeZ, 0.075, 0.075, 0.13, skinMaterial);
+    addCone(trollGroup, x, 0.12, toeZ + 0.09, 0.035, 0.09, toothMaterial, side * -0.15);
+  });
 
-  // Тело и броня
-  addSphere(trollGroup, 0, 1.55, 0, 0.56, 0.72, 0.37, skinMaterial);
+  // Широкий торс и выраженная грудь
+  addSphere(trollGroup, 0, 1.12, 0, 0.48, 0.42, 0.36, skinMaterial);
+  addSphere(trollGroup, 0, 1.72, 0, 0.66, 0.62, 0.4, skinMaterial);
+  addSphere(trollGroup, -0.3, 1.82, 0.2, 0.34, 0.29, 0.24, skinMaterial);
+  addSphere(trollGroup, 0.3, 1.82, 0.2, 0.34, 0.29, 0.24, skinMaterial);
+  addSphere(trollGroup, 0, 2.15, 0, 0.3, 0.3, 0.29, skinMaterial);
 
-  if (game.equipped.armor === "armor-iron") {
-    addSphere(trollGroup, 0, 1.62, 0.08, 0.58, 0.55, 0.42, metalMaterial);
-    addSphere(trollGroup, 0, 1.67, 0.46, 0.11, 0.32, 0.05, leatherLight);
-  } else if (game.equipped.armor === "armor-fur") {
+  if (game.equipped.armor === "armor-iron"
+    || game.equipped.armor === "armor-gold") {
+    const armorMaterial = game.equipped.armor === "armor-gold"
+      ? goldMaterial
+      : metalMaterial;
+    addSphere(trollGroup, 0, 1.72, 0.12, 0.61, 0.48, 0.4, armorMaterial);
+    addBox(trollGroup, 0, 1.72, 0.5, 0.08, 0.38, 0.04, leatherLight);
+    [-0.42, 0.42].forEach(x => {
+      addSphere(trollGroup, x, 2.0, 0.02, 0.3, 0.22, 0.31, armorMaterial);
+      addSphere(trollGroup, x, 1.99, 0.27, 0.06, 0.06, 0.04, goldMaterial);
+    });
+    if (game.equipped.armor === "armor-gold") {
+      [-0.24, 0, 0.24].forEach(x => {
+        addSphere(trollGroup, x, 1.74, 0.51, 0.045, 0.045, 0.025, beltMaterial);
+      });
+    }
+  } else if (game.equipped.armor === "armor-scandinavian") {
     const furMaterial = makeMaterial(0xc3b492);
-    addSphere(trollGroup, 0, 2.02, 0, 0.6, 0.22, 0.42, furMaterial);
-    addSphere(trollGroup, 0, 1.55, 0, 0.53, 0.54, 0.39, leatherMaterial);
-    addSphere(trollGroup, 0, 1.56, 0.39, 0.28, 0.35, 0.05, leatherLight);
-  } else {
-    addSphere(trollGroup, 0, 1.56, 0, 0.53, 0.54, 0.39, leatherMaterial);
-    addSphere(trollGroup, 0, 1.57, 0.39, 0.27, 0.34, 0.05, leatherLight);
+    addSphere(trollGroup, 0, 2.04, 0, 0.72, 0.25, 0.46, furMaterial);
+    [-0.46, -0.23, 0, 0.23, 0.46].forEach(x => {
+      addSphere(trollGroup, x, 2.0, 0.37, 0.13, 0.09, 0.08, furMaterial);
+    });
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(-0.42, 2.02, 0.25),
+      new THREE.Vector3(0.36, 1.25, 0.36),
+      0.095,
+      leatherLight
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(0.42, 2.02, 0.25),
+      new THREE.Vector3(-0.36, 1.25, 0.36),
+      0.065,
+      leatherMaterial
+    );
+    addSphere(trollGroup, -0.53, 1.98, 0.02, 0.27, 0.23, 0.28, leatherMaterial);
+  } else if (game.equipped.armor === "armor-japanese") {
+    addSphere(trollGroup, 0, 1.72, 0.12, 0.59, 0.48, 0.39, japaneseMaterial);
+    [1.52, 1.68, 1.84, 2].forEach(y => {
+      addBox(trollGroup, 0, y, 0.47, 0.82 - Math.abs(y - 1.72) * 0.28, 0.09, 0.055, leatherMaterial);
+      [-0.26, 0, 0.26].forEach(x => {
+        addSphere(trollGroup, x, y, 0.51, 0.025, 0.025, 0.02, goldMaterial);
+      });
+    });
+    [-0.5, 0.5].forEach(x => {
+      addSphere(trollGroup, x, 1.98, 0.02, 0.3, 0.2, 0.29, japaneseMaterial);
+    });
+    addBox(trollGroup, 0, 1.23, 0.43, 0.75, 0.13, 0.08, oniMaterial);
+  } else if (game.equipped.armor === "armor-leather") {
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(-0.42, 2.02, 0.2),
+      new THREE.Vector3(0.36, 1.25, 0.32),
+      0.09,
+      leatherLight
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(0.42, 2.02, 0.2),
+      new THREE.Vector3(-0.36, 1.25, 0.32),
+      0.065,
+      leatherMaterial
+    );
+    addSphere(trollGroup, -0.53, 1.98, 0.02, 0.27, 0.23, 0.28, leatherMaterial);
+    addBox(trollGroup, -0.42, 1.9, 0.38, 0.12, 0.09, 0.035, beltMaterial, 0.72);
+    addBox(trollGroup, 0.29, 1.36, 0.42, 0.12, 0.09, 0.035, beltMaterial, 0.72);
   }
 
-  // Ремень и пряжка
-  addCylinder(trollGroup, 0, 1.17, 0.02, 0.48, 0.48, 0.12, leatherLight);
-  addSphere(trollGroup, 0, 1.17, 0.49, 0.11, 0.11, 0.06, makeMaterial(0xd9ae4d));
+  addClothPanel(trollGroup, 0, 1.08, 0.34, [
+    [-0.39, 0.1], [0.39, 0.1], [0.31, -0.28], [0.1, -0.55], [-0.24, -0.42]
+  ], clothMaterial);
+  addClothPanel(trollGroup, 0.04, 1.08, 0.4, [
+    [-0.22, 0.08], [0.3, 0.08], [0.25, -0.27], [0.04, -0.44], [-0.18, -0.25]
+  ], leatherMaterial);
+  addCylinder(trollGroup, 0, 1.2, 0.02, 0.49, 0.49, 0.15, leatherMaterial);
+  addBox(trollGroup, 0, 1.2, 0.515, 0.2, 0.17, 0.07, beltMaterial);
+  addBox(trollGroup, 0, 1.2, 0.56, 0.11, 0.085, 0.025, leatherMaterial);
 
-  // Руки
-  addBetween(
+  const fireAxeTwoHanded = game.equipped.weapon === "weapon-fire-axe";
+
+  if (!fireAxeTwoHanded) {
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(-0.53, 1.98, 0),
+      new THREE.Vector3(-0.83, 1.42, 0.04),
+      0.24,
+      skinMaterial
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(0.53, 1.98, 0),
+      new THREE.Vector3(0.83, 1.42, 0.04),
+      0.24,
+      skinMaterial
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(-0.83, 1.42, 0.04),
+      new THREE.Vector3(-0.96, 1.12, 0.12),
+      0.2,
+      skinMaterial
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(0.83, 1.42, 0.04),
+      new THREE.Vector3(0.96, 1.12, 0.12),
+      0.2,
+      skinMaterial
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(-0.87, 1.38, 0.12),
+      new THREE.Vector3(-0.95, 1.19, 0.17),
+      0.21,
+      leatherLight
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(0.87, 1.38, 0.12),
+      new THREE.Vector3(0.95, 1.19, 0.17),
+      0.21,
+      leatherLight
+    );
+    addSphere(trollGroup, -0.98, 1.08, 0.17, 0.2, 0.2, 0.18, skinMaterial);
+    addSphere(trollGroup, 0.98, 1.08, 0.17, 0.2, 0.2, 0.18, skinMaterial);
+  } else {
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(-0.53, 1.98, 0),
+      new THREE.Vector3(-0.48, 1.62, 0.08),
+      0.24,
+      skinMaterial
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(-0.48, 1.62, 0.08),
+      new THREE.Vector3(-0.12, 1.43, 0.48),
+      0.19,
+      skinMaterial
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(0.53, 1.98, 0),
+      new THREE.Vector3(0.48, 1.58, 0.08),
+      0.24,
+      skinMaterial
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(0.48, 1.58, 0.08),
+      new THREE.Vector3(0.12, 1.2, 0.48),
+      0.19,
+      skinMaterial
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(-0.3, 1.52, 0.28),
+      new THREE.Vector3(-0.12, 1.43, 0.49),
+      0.2,
+      leatherLight
+    );
+    addBetween(
+      trollGroup,
+      new THREE.Vector3(0.3, 1.39, 0.28),
+      new THREE.Vector3(0.12, 1.2, 0.49),
+      0.2,
+      leatherLight
+    );
+    addSphere(trollGroup, -0.12, 1.43, 0.48, 0.18, 0.17, 0.16, skinMaterial);
+    addSphere(trollGroup, 0.12, 1.2, 0.48, 0.18, 0.17, 0.16, skinMaterial);
+  }
+
+  const shoulderMaterial = game.equipped.armor === "armor-iron"
+    ? metalMaterial
+    : game.equipped.armor === "armor-gold"
+      ? goldMaterial
+      : game.equipped.armor === "armor-japanese"
+        ? japaneseMaterial
+        : game.equipped.armor === "armor-leather"
+          || game.equipped.armor === "armor-scandinavian"
+          ? leatherMaterial
+          : darkerSkin;
+  addSphere(trollGroup, -0.54, 1.98, 0.01, 0.28, 0.25, 0.3, shoulderMaterial);
+  addSphere(trollGroup, 0.54, 1.98, 0.01, 0.28, 0.25, 0.3, shoulderMaterial);
+
+  if (!fireAxeTwoHanded) {
+    [-1, 1].forEach(side => {
+      const fingerCount = side < 0 && game.equipped.weapon !== "weapon-none" ? 2 : 3;
+      for (let finger = 0; finger < fingerCount; finger += 1) {
+        const spread = (finger - 1) * 0.1;
+        const start = new THREE.Vector3(side * 1.02 + spread, 1.0, 0.2);
+        const end = new THREE.Vector3(side * 1.03 + spread * 1.5, 0.84, 0.25);
+        addBetween(trollGroup, start, end, 0.055, skinMaterial);
+        addCone(trollGroup, end.x, 0.79, 0.27, 0.035, 0.1, toothMaterial, side * -0.2);
+      }
+    });
+  }
+
+  addTrollWeapon(
     trollGroup,
-    new THREE.Vector3(-0.48, 1.95, 0),
-    new THREE.Vector3(-0.76, 1.25, 0.06),
-    0.16,
-    skinMaterial
+    woodMaterial,
+    metalMaterial,
+    leatherMaterial,
+    beltMaterial,
+    fireMaterial,
+    flameCore
   );
-  addBetween(
-    trollGroup,
-    new THREE.Vector3(0.48, 1.95, 0),
-    new THREE.Vector3(0.76, 1.25, 0.06),
-    0.16,
-    skinMaterial
-  );
-  addSphere(trollGroup, -0.78, 1.2, 0.08, 0.19, 0.18, 0.17, skinMaterial);
-  addSphere(trollGroup, 0.78, 1.2, 0.08, 0.19, 0.18, 0.17, skinMaterial);
 
-  // Наплечники
-  addSphere(trollGroup, -0.54, 1.94, 0.01, 0.27, 0.23, 0.28,
-    game.equipped.armor === "armor-iron" ? metalMaterial : darkerSkin);
-  addSphere(trollGroup, 0.54, 1.94, 0.01, 0.27, 0.23, 0.28,
-    game.equipped.armor === "armor-iron" ? metalMaterial : darkerSkin);
+  // Голова с выраженной челюстью, ушами и клыками
+  addCylinder(trollGroup, 0, 2.2, 0, 0.23, 0.26, 0.34, skinMaterial);
+  addSphere(trollGroup, 0, 2.58, 0.02, 0.53, 0.55, 0.44, skinMaterial);
+  addSphere(trollGroup, 0, 2.34, 0.12, 0.43, 0.28, 0.39, skinMaterial);
+  [-1, 1].forEach(side => {
+    addSphere(trollGroup, side * 0.49, 2.56, 0, 0.18, 0.19, 0.13, darkerSkin);
+    addCone(
+      trollGroup,
+      side * 0.67,
+      2.62,
+      -0.015,
+      0.145,
+      0.46,
+      skinMaterial,
+      -side * Math.PI / 2.7
+    );
+    addCone(
+      trollGroup,
+      side * 0.55,
+      2.58,
+      0.09,
+      0.06,
+      0.25,
+      innerEarMaterial,
+      -side * Math.PI / 2.7
+    );
+  });
 
-  // Голова и уши
-  addCylinder(trollGroup, 0, 2.18, 0, 0.2, 0.21, 0.27, skinMaterial);
-  addSphere(trollGroup, 0, 2.54, 0.02, 0.51, 0.58, 0.43, skinMaterial);
-  addSphere(trollGroup, -0.52, 2.48, 0, 0.16, 0.26, 0.11, darkerSkin);
-  addSphere(trollGroup, 0.52, 2.48, 0, 0.16, 0.26, 0.11, darkerSkin);
-
-  // Брови и глаза
-  addSphere(trollGroup, -0.2, 2.67, 0.39, 0.19, 0.065, 0.07, hairMaterial);
-  addSphere(trollGroup, 0.2, 2.67, 0.39, 0.19, 0.065, 0.07, hairMaterial);
-  addSphere(trollGroup, -0.2, 2.55, 0.4, 0.095, 0.11, 0.055, eyeMaterial);
-  addSphere(trollGroup, 0.2, 2.55, 0.4, 0.095, 0.11, 0.055, eyeMaterial);
-  addSphere(trollGroup, -0.18, 2.55, 0.45, 0.035, 0.07, 0.025, pupilMaterial);
-  addSphere(trollGroup, 0.22, 2.55, 0.45, 0.035, 0.07, 0.025, pupilMaterial);
-
-  // Большой нос, улыбка и клыки
-  addSphere(trollGroup, 0, 2.38, 0.49, 0.18, 0.17, 0.16, darkerSkin);
-  addSphere(trollGroup, 0, 2.19, 0.405, 0.27, 0.09, 0.06, leatherMaterial);
-  addSphere(trollGroup, -0.16, 2.19, 0.44, 0.04, 0.07, 0.035, toothMaterial);
-  addSphere(trollGroup, 0.16, 2.19, 0.44, 0.04, 0.07, 0.035, toothMaterial);
+  // Глубокие брови, янтарные глаза и широкий нос
+  const leftBrow = addSphere(trollGroup, -0.22, 2.76, 0.37, 0.22, 0.09, 0.1, hairMaterial);
+  const rightBrow = addSphere(trollGroup, 0.22, 2.76, 0.37, 0.22, 0.09, 0.1, hairMaterial);
+  leftBrow.rotation.z = -0.12;
+  rightBrow.rotation.z = 0.12;
+  [-1, 1].forEach(side => {
+    addSphere(trollGroup, side * 0.2, 2.63, 0.4, 0.11, 0.105, 0.06, eyeMaterial);
+    addSphere(trollGroup, side * 0.2, 2.63, 0.455, 0.052, 0.07, 0.025, irisMaterial);
+    addSphere(trollGroup, side * 0.2, 2.63, 0.476, 0.024, 0.055, 0.018, pupilMaterial);
+  });
+  addSphere(trollGroup, 0, 2.48, 0.46, 0.23, 0.18, 0.17, darkerSkin);
+  addSphere(trollGroup, 0, 2.43, 0.57, 0.15, 0.11, 0.09, skinMaterial);
+  addSphere(trollGroup, -0.075, 2.46, 0.645, 0.035, 0.022, 0.018, pupilMaterial);
+  addSphere(trollGroup, 0.075, 2.46, 0.645, 0.035, 0.022, 0.018, pupilMaterial);
+  addSphere(trollGroup, 0, 2.24, 0.43, 0.28, 0.11, 0.1, leatherMaterial);
+  [-1, 1].forEach(side => {
+    addCone(trollGroup, side * 0.17, 2.3, 0.49, 0.075, 0.27, toothMaterial);
+  });
 
   addHair(trollGroup, hairMaterial);
-  addTrollHelmet(trollGroup, metalMaterial, leatherMaterial);
+  addTrollHelmet(
+    trollGroup,
+    metalMaterial,
+    leatherMaterial,
+    leatherLight,
+    goldMaterial,
+    oniMaterial,
+    toothMaterial,
+    beltMaterial
+  );
 
   trollGroup.position.y = 0;
 }
@@ -505,14 +1123,14 @@ function initializeTroll() {
   renderer.outputEncoding = THREE.sRGBEncoding;
   host.appendChild(renderer.domElement);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 1.25));
+  scene.add(new THREE.AmbientLight(0xffffff, 0.35));
 
-  const keyLight = new THREE.DirectionalLight(0xfff0d7, 2.2);
+  const keyLight = new THREE.DirectionalLight(0xffe6c6, 0.85);
   keyLight.position.set(-3, 5, 5);
   keyLight.castShadow = true;
   scene.add(keyLight);
 
-  const rimLight = new THREE.DirectionalLight(0x49d7b2, 1.5);
+  const rimLight = new THREE.DirectionalLight(0x49d7b2, 0.3);
   rimLight.position.set(4, 3, -3);
   scene.add(rimLight);
 
@@ -1797,20 +2415,14 @@ function reconcileSavedTerritoryArea() {
     });
 
     const oldArea = game.capturedArea;
-    const oldCoins = game.earnedCoins;
     const oldCaptureCount = game.captureCount;
     game.capturedArea = uniqueArea;
     game.captureCount = uniqueCaptureCount;
-    game.earnedCoins = Math.floor(
-      Math.min(100, (uniqueArea / PLAYABLE_WORLD_AREA_M2) * 100) * COINS_PER_PERCENT
-    );
 
     if (Math.abs(oldArea - uniqueArea) > 0.5
-      || oldCoins !== game.earnedCoins
       || oldCaptureCount !== uniqueCaptureCount) {
       saveState();
       if (oldArea - uniqueArea > 0.5
-        || oldCoins !== game.earnedCoins
         || oldCaptureCount !== uniqueCaptureCount) {
         showToast("Площадь и награды пересчитаны без повторного учёта захватов.");
       }
@@ -2110,25 +2722,12 @@ function cancelRoute() {
 }
 
 function captureTerritory(points, area, newArea, options = {}) {
-  const previousPercent = Math.min(
-    100,
-    (game.capturedArea / PLAYABLE_WORLD_AREA_M2) * 100
-  );
-
+  const previousArea = game.capturedArea;
   game.capturedArea += newArea;
   game.captureCount += 1;
-
-  const currentPercent = Math.min(
-    100,
-    (game.capturedArea / PLAYABLE_WORLD_AREA_M2) * 100
-  );
-
-  // Начисление по приросту процента: 10 монет за каждый новый 1% игровой зоны.
-  const oldCoinMark = Math.floor(previousPercent * COINS_PER_PERCENT);
-  const newCoinMark = Math.floor(currentPercent * COINS_PER_PERCENT);
-  const reward = Math.max(0, newCoinMark - oldCoinMark);
-
-  game.earnedCoins += reward;
+  const reward = Math.floor(game.capturedArea / COINS_PER_CAPTURED_AREA_M2)
+    - Math.floor(previousArea / COINS_PER_CAPTURED_AREA_M2);
+  game.coins += reward;
   game.capturedZones.push({
     area,
     points: points.map(point => [point[0], point[1]])
@@ -2137,6 +2736,7 @@ function captureTerritory(points, area, newArea, options = {}) {
   routeLine?.setLatLngs([]);
   redrawCapturedTerritories(true);
   saveState();
+  updateWallet();
   updateMapStats();
 
   if (options.eatenPlayer) {
@@ -2150,10 +2750,12 @@ function captureTerritory(points, area, newArea, options = {}) {
     );
   } else {
     setGpsStatus(
-      `Новая территория: ${formatArea(newArea)}. Получено ${reward} монет.`,
+      `Новая территория: ${formatArea(newArea)}. Получено ${formatCoins(reward)} монет.`,
       "ok"
     );
-    showToast(`Захвачено новой территории: ${formatArea(newArea)} · +${reward} монет.`);
+    showToast(
+      `Захвачено новой территории: ${formatArea(newArea)} · +${formatCoins(reward)} монет.`
+    );
   }
 
   if (game.shareTerritories && options.publish !== false) publishTerritory(points, area);
@@ -2392,9 +2994,7 @@ function escapeHtml(value) {
 /* Начальная настройка */
 
 reconcileSavedTerritoryArea();
-
-document.getElementById("walletValue").textContent =
-  game.unlimitedMoney ? "∞" : String(game.earnedCoins);
+updateWallet();
 
 bindAppearanceControls();
 updateAppearanceControls();
