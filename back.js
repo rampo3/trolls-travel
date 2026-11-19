@@ -1395,12 +1395,7 @@ function initializeMap() {
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
   capturedTerritoriesLayer = L.geoJSON(null, {
-    color: "#1ba782",
-    weight: 0,
-    opacity: 0,
-    stroke: false,
-    fillColor: "#35ddb0",
-    fillOpacity: 0.3
+    style: () => territoryStyleForPlayer(onlineUserId)
   }).addTo(map);
 
   routeLine = L.polyline([], {
@@ -2067,7 +2062,6 @@ function redrawCapturedTerritories(fitBounds) {
     }
 
     capturedTerritoriesLayer.clearLayers();
-    capturedTerritoriesLayer.setStyle(style);
     capturedTerritoriesLayer.addData(geometry);
     if (fitBounds) {
       map.fitBounds(capturedTerritoriesLayer.getBounds(), { padding: [36, 36] });
