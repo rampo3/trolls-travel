@@ -220,6 +220,7 @@
           <div class="map-legend">
             <span><i class="legend-dot own"></i> Моя территория</span>
             <span><i class="legend-dot route"></i> Маршрут</span>
+            <span><i class="legend-dot boundary"></i> Граница городского округа</span>
             <span><i class="legend-dot landmark"></i> Важные места</span>
           </div>
         </div>
@@ -267,7 +268,7 @@
             </div>
 
             <p class="muted">
-              Начни маршрут и замкни контур рядом с точкой старта.
+              Играй в пределах городского округа Иваново: начни маршрут и замкни контур рядом с точкой старта.
               Перед захватом граница упрощается до чётких прямых отрезков.
               Если контур пересекает чужую территорию, ты забираешь только часть внутри
               своего контура; остаток остаётся прежнему владельцу.
@@ -426,6 +427,7 @@
   <script src="https://cdn.jsdelivr.net/npm/polygon-clipping@0.15.7/dist/polygon-clipping.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="online-config.js"></script>
+  <script src="ivanovo-urban-okrug.js"></script>
   <script src="back.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 "use strict";
 
 const STORAGE_KEY = "trollsTravelMiniAgarioV1";
-const PLAYABLE_WORLD_AREA_M2 = 5_000_000;
+const PLAYABLE_WORLD_AREA_M2 = 107_455_488;
 const COINS_PER_PERCENT = 10;
 const MIN_CAPTURE_AREA_M2 = 1_000;
 const ROUTE_CLOSE_DISTANCE_M = 50;
@@ -598,6 +598,7 @@ let routeDistance = 0;
 let lastRoutePointAt = 0;
 let lastRouteAccuracy = 0;
 let capturedTerritoriesLayer = null;
+let playableBoundaryLayer = null;
 let landmarkMarkers = [];
 let onlineTerritoriesLayer = null;
 let onlineClient = null;
@@ -1253,6 +1254,84 @@ function territoryCoordinatePolygons(zone) {
   return [[ring]];
 }
 
+function getPlayableAreaGeometry() {
+  const feature = window.IVANOVO_URBAN_OKRUG;
+  const geometry = feature?.type === "Feature" ? feature.geometry : feature;
+  if (!geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) {
+    throw new Error("Не загружена граница городского округа Иваново.");
+  }
+  return geometry;
+}
+
+function pointIsInRing(point, ring) {
+  const [latitude, longitude] = point;
+  let inside = false;
+
+  for (let index = 0, previousIndex = ring.length - 1;
+    index < ring.length;
+    previousIndex = index, index += 1) {
+    const [startLon, startLat] = ring[previousIndex];
+    const [endLon, endLat] = ring[index];
+    const cross = (longitude - startLon) * (endLat - startLat)
+      - (latitude - startLat) * (endLon - startLon);
+    const dot = (longitude - startLon) * (longitude - endLon)
+      + (latitude - startLat) * (latitude - endLat);
+    if (Math.abs(cross) < 1e-10 && dot <= 1e-10) return true;
+
+    const crossesLatitude = (startLat > latitude) !== (endLat > latitude);
+    if (crossesLatitude
+      && longitude < (endLon - startLon) * (latitude - startLat)
+        / (endLat - startLat) + startLon) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+function isPointWithinPlayableArea(point) {
+  const geometry = getPlayableAreaGeometry();
+  const polygons = geometry.type === "Polygon"
+    ? [geometry.coordinates]
+    : geometry.coordinates;
+
+  return polygons.some(rings => pointIsInRing(point, rings[0])
+    && !rings.slice(1).some(ring => pointIsInRing(point, ring)));
+}
+
+function toClippingGeometry(geometry, originLat, originLon) {
+  const radius = 6378137;
+  const latitudeScale = Math.cos(originLat * Math.PI / 180);
+  const polygons = geometry.type === "Polygon"
+    ? [geometry.coordinates]
+    : geometry.coordinates;
+
+  return polygons.map(rings => rings.map(ring => ring.map(([longitude, latitude]) => [
+    radius * (longitude - originLon) * Math.PI / 180 * latitudeScale,
+    radius * (latitude - originLat) * Math.PI / 180
+  ])));
+}
+
+function isTerritoryWithinPlayableArea(points) {
+  const clipping = window.polygonClipping;
+  if (!clipping) throw new Error("Не загрузилась библиотека проверки границ.");
+  if (!isValidAreaPoints(points)) {
+    throw new Error("Маршрут содержит некорректные координаты.");
+  }
+
+  const originLat = points.reduce((sum, point) => sum + point[0], 0) / points.length;
+  const originLon = points.reduce((sum, point) => sum + point[1], 0) / points.length;
+  const areaGeometry = toClippingGeometry(
+    getPlayableAreaGeometry(),
+    originLat,
+    originLon
+  );
+  const territory = clipping.union(toClippingPolygon(points, originLat, originLon));
+  const outside = clipping.difference(territory, areaGeometry);
+
+  return clippedGeometryArea(outside) <= 0.1;
+}
+
 async function tryEatTerritory(points) {
   if (!onlineClient || !onlineUserId) return null;
 
@@ -1406,6 +1485,22 @@ function initializeMap() {
     lineJoin: "round",
     smoothFactor: 0
   }).addTo(map);
+
+  playableBoundaryLayer = L.geoJSON(getPlayableAreaGeometry(), {
+    style: {
+      color: "#e6b849",
+      weight: 3,
+      opacity: 0.95,
+      fillColor: "#e6b849",
+      fillOpacity: 0.035,
+      dashArray: "8 6"
+    }
+  }).addTo(map);
+  playableBoundaryLayer.bindPopup(
+    "Граница городского округа Иваново · данные OpenStreetMap"
+  );
+  playableBoundaryLayer.bringToFront();
+  map.fitBounds(playableBoundaryLayer.getBounds(), { padding: [20, 20] });
 
   redrawCapturedTerritories(false);
 
@@ -1846,6 +1941,19 @@ function onPositionUpdate(position) {
     median(routeFixes.map(fix => fix[1]))
   ];
 
+  if (tracking && !isPointWithinPlayableArea(filteredPoint)) {
+    tracking = false;
+    stopGpsWatch();
+    routePoints = [];
+    routeDistance = 0;
+    routeLine.setLatLngs([]);
+    setRouteButtons();
+    setGpsStatus("Ты за пределами городского округа Иваново. Маршрут остановлен.", "error");
+    showToast("Играть можно только в пределах городского округа Иваново.", true);
+    updateMapStats();
+    return;
+  }
+
   if (routePoints.length === 0) {
     routePoints.push(filteredPoint);
     lastRoutePointAt = receivedAt;
@@ -1911,6 +2019,19 @@ async function finishRoute() {
   const pointsToCapture = [...routePoints];
   if (gap > 2) pointsToCapture.push(start);
   const polygonPoints = simplifyTerritoryOutline(pointsToCapture);
+
+  try {
+    if (!isTerritoryWithinPlayableArea(polygonPoints)) {
+      setGpsStatus("Контур выходит за границу городского округа Иваново.", "error");
+      showToast("Захват возможен только внутри городского округа Иваново.", true);
+      return;
+    }
+  } catch (error) {
+    console.error("Playable-area validation failed:", error);
+    setGpsStatus("Не удалось проверить границу игрового района.", "error");
+    showToast("Захват не выполнен: не удалось проверить игровую границу.", true);
+    return;
+  }
 
   const area = polygonAreaMeters(polygonPoints);
 
