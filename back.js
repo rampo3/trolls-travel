@@ -1486,14 +1486,26 @@ function initializeMap() {
     smoothFactor: 0
   }).addTo(map);
 
-  playableBoundaryLayer = L.geoJSON(getPlayableAreaGeometry(), {
+  const playableAreaGeometry = getPlayableAreaGeometry();
+  L.geoJSON(playableAreaGeometry, {
     style: {
-      color: "#e6b849",
-      weight: 3,
-      opacity: 0.95,
-      fillColor: "#e6b849",
-      fillOpacity: 0.035,
-      dashArray: "8 6"
+      color: "#ffffff",
+      weight: 9,
+      opacity: 0.9,
+      fill: false,
+      lineCap: "round",
+      lineJoin: "round"
+    }
+  }).addTo(map);
+  playableBoundaryLayer = L.geoJSON(playableAreaGeometry, {
+    style: {
+      color: "#000000",
+      weight: 5,
+      opacity: 1,
+      fillColor: "#000000",
+      fillOpacity: 0.025,
+      lineCap: "round",
+      lineJoin: "round"
     }
   }).addTo(map);
   playableBoundaryLayer.bindPopup(
