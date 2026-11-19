@@ -567,6 +567,12 @@ body.auth-landing main {
 .legend-dot.own { background: #35ddb0; }
 .legend-dot.route { background: #7c66f5; }
 .legend-dot.landmark { background: #e9a94f; }
+.legend-dot.boundary {
+  width: 12px;
+  height: 8px;
+  border: 2px solid #e6b849;
+  border-radius: 2px;
+}
 
 .side-panel {
   display: grid;

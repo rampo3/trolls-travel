@@ -1,5 +1,6 @@
 -- Частичное поглощение чужой территории TrollsTravel.
--- Выполни после supabase-schema.sql в SQL Editor проекта Supabase.
+-- Выполни после supabase-schema.sql и supabase-ivanovo-boundary.sql
+-- в SQL Editor проекта Supabase.
 
 create extension if not exists postgis with schema extensions;
 
@@ -99,6 +100,10 @@ begin
   attack_area := extensions.ST_Area(attack_shape::extensions.geography);
   if attack_area < 1000 or attack_area > 5000000 then
     return jsonb_build_object('eaten', false, 'reason', 'invalid_attack_area');
+  end if;
+
+  if not public.is_within_ivanovo_urban_okrug(attack_shape) then
+    return jsonb_build_object('eaten', false, 'reason', 'outside_playable_area');
   end if;
 
   select extensions.ST_Union(
