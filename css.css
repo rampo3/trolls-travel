@@ -1115,18 +1115,34 @@ body.auth-landing main {
   font-size: 12px;
 }
 
-.shop-infinity {
+.shop-balance {
   color: var(--gold);
   font-size: 54px;
   font-weight: 850;
   text-align: center;
 }
 
-.shop-infinity small {
+.shop-balance small {
   display: block;
   color: var(--muted);
   font-size: 10px;
   letter-spacing: 0.1em;
+}
+
+.shop-categories {
+  display: grid;
+  gap: 24px;
+}
+
+.shop-category {
+  display: grid;
+  gap: 10px;
+}
+
+.shop-category h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 19px;
 }
 
 .shop-grid {
@@ -1487,7 +1503,7 @@ body.auth-landing main {
     padding: 18px;
   }
 
-  .shop-infinity {
+  .shop-balance {
     align-self: flex-end;
     font-size: 42px;
     line-height: 1;
