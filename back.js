@@ -1421,8 +1421,9 @@ async function createPlayerAccount() {
       showToast("Аккаунт создан. Текущий игрок и его территории сохранены.");
     } else {
       setAuthStatus(
-        `Проверь почту ${emailInput.value.trim()}, чтобы подтвердить адрес. Игрок и его ID сохранены.`
+        `Аккаунт почти создан. Подтверди почту ${emailInput.value.trim()} по ссылке из письма, чтобы завершить регистрацию. Игрок и его ID сохранены.`
       );
+      showToast("Подтверди почту по ссылке из письма, чтобы завершить регистрацию.");
     }
   } catch (error) {
     console.error("Player account registration failed:", error);
