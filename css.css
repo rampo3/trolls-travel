@@ -570,7 +570,8 @@ body.auth-landing main {
 .legend-dot.boundary {
   width: 12px;
   height: 8px;
-  border: 2px solid #e6b849;
+  background: #fff;
+  border: 2px solid #000;
   border-radius: 2px;
 }
 
