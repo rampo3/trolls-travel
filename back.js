@@ -852,6 +852,25 @@ async function savePlayerProfile() {
   }
 }
 
+async function syncTerritoryColorToAccount(color) {
+  if (!onlineUser || onlineUser.is_anonymous) return;
+  if (!onlineClient) {
+    setAuthStatus("Цвет применён на этом устройстве, но аккаунт недоступен для синхронизации.", true);
+    return;
+  }
+
+  try {
+    const { data, error } = await onlineClient.auth.updateUser({
+      data: { territory_color: color }
+    });
+    if (error) throw error;
+    onlineUser = data.user;
+  } catch (error) {
+    console.error("Territory color could not be synced to the account:", error);
+    setAuthStatus("Цвет применён на этом устройстве, но не синхронизирован с аккаунтом.", true);
+  }
+}
+
 async function loginPlayerAccount() {
   if (!onlineClient) return;
 
@@ -940,7 +959,13 @@ async function initializeOnline() {
     if (!(option instanceof HTMLInputElement)
       || option.name !== "territoryColorChoice") return;
 
-    territoryColorInput.value = option.value.toLowerCase();
+    const color = option.value.toLowerCase();
+    territoryColorInput.value = color;
+    game.territoryColor = color;
+    saveState();
+    redrawCapturedTerritories(false);
+    showToast("Цвет территории изменён.");
+    syncTerritoryColorToAccount(color);
     territoryColorPalette.querySelectorAll(".territory-color-option")
       .forEach(item => item.classList.toggle("selected", item.contains(option)));
   });
@@ -1015,7 +1040,7 @@ async function initializeOnline() {
       onlineUser = nextSession?.user || null;
       onlineUserId = onlineUser?.id || null;
       if (onlineUser && !onlineUser.is_anonymous
-        && (previousUserId !== onlineUserId || event === "USER_UPDATED")) {
+        && previousUserId !== onlineUserId) {
         applyAccountProfile(onlineUser);
       }
       renderAuthState(onlineUser);
